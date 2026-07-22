@@ -1,12 +1,66 @@
 const db = require('./db');
 
 /**
- * Normalisasi nomor HP atau JID ke string angka murni
+ * Strips device ID from WhatsApp JID (e.g. 197341567021139:45@lid -> 197341567021139@lid)
+ */
+function cleanJid(jid) {
+  if (!jid) return '';
+  const part = String(jid).trim().split(':')[0];
+  if (part.includes('@')) return part.toLowerCase();
+  const domain = jid.includes('@') ? jid.split('@')[1] : 's.whatsapp.net';
+  return `${part}@${domain}`.toLowerCase();
+}
+
+/**
+ * Normalisasi JID atau nomor ke string angka murni
  */
 function getPureNumber(jidOrPhone) {
   if (!jidOrPhone) return '';
-  const clean = jidOrPhone.split(':')[0].split('@')[0];
-  return clean.replace(/[^0-9]/g, '');
+  const cleaned = cleanJid(jidOrPhone);
+  return cleaned.split('@')[0].replace(/[^0-9]/g, '');
+}
+
+/**
+ * Memeriksa apakah JID pengirim cocok dengan Admin JID / Admin Number
+ */
+function isAdmin(senderJid) {
+  const adminRaw = process.env.ADMIN_JID || process.env.ADMIN_NUMBER || '';
+  if (!adminRaw) return false;
+
+  const senderClean = cleanJid(senderJid);
+  const senderPure = getPureNumber(senderJid);
+
+  // Split multiple admin entries separated by comma
+  const adminList = adminRaw.split(',').map(a => a.trim());
+
+  for (const adminItem of adminList) {
+    if (!adminItem) continue;
+    const adminClean = cleanJid(adminItem);
+    const adminPure = getPureNumber(adminItem);
+
+    // Clean JID match (e.g. 197341567021139@lid === 197341567021139@lid)
+    if (adminClean && senderClean === adminClean) return true;
+
+    // Pure number match (e.g. 6285117569816 === 6285117569816)
+    if (adminPure && senderPure === adminPure) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Get primary Admin JID for sending notifications
+ */
+function getAdminJid() {
+  const adminRaw = process.env.ADMIN_JID || process.env.ADMIN_NUMBER || '';
+  if (!adminRaw) return '';
+  const firstAdmin = adminRaw.split(',')[0].trim();
+  const cleaned = cleanJid(firstAdmin);
+  if (cleaned.includes('@')) {
+    return cleaned;
+  }
+  const pure = getPureNumber(firstAdmin);
+  return pure ? `${pure}@s.whatsapp.net` : '';
 }
 
 /**
@@ -102,6 +156,8 @@ function getInvoiceByNumber(invoiceNumber) {
  */
 function getPendingInvoiceForUser(customerJid, chatJid) {
   const pureUser = getPureNumber(customerJid);
+  const cleanUser = cleanJid(customerJid);
+
   const rows = db.prepare(`
     SELECT * FROM invoices 
     WHERE status IN ('PENDING', 'PROOF_SUBMITTED')
@@ -109,15 +165,13 @@ function getPendingInvoiceForUser(customerJid, chatJid) {
   `).all();
 
   for (const row of rows) {
-    const rowUser = getPureNumber(row.customer_jid);
-    if (rowUser === pureUser && (row.chat_jid === chatJid || !chatJid)) {
+    if (cleanJid(row.customer_jid) === cleanUser && (row.chat_jid === chatJid || !chatJid)) {
       return row;
     }
   }
 
-  // Fallback: match by pure user ID anywhere
   for (const row of rows) {
-    if (getPureNumber(row.customer_jid) === pureUser) {
+    if (getPureNumber(row.customer_jid) === pureUser || cleanJid(row.customer_jid) === cleanUser) {
       return row;
     }
   }
@@ -208,7 +262,10 @@ function setConfig(key, value) {
 }
 
 module.exports = {
+  cleanJid,
   getPureNumber,
+  isAdmin,
+  getAdminJid,
   generateInvoiceNumber,
   getCurrentFormattedTimestamp,
   createInvoice,

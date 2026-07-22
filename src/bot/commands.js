@@ -3,22 +3,8 @@ const { createInvoiceService, formatRupiah, formatAdminInvoiceNotification } = r
 const { decodeQRFromBuffer } = require('../qris/qr-reader');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 
-/**
- * Normalisasi nomor HP atau JID ke string angka murni
- */
-function getPureNumber(jidOrPhone) {
-  return invoiceRepo.getPureNumber(jidOrPhone);
-}
-
-/**
- * Memeriksa apakah pengirim adalah Admin
- */
 function isAdmin(senderJid) {
-  const adminRaw = process.env.ADMIN_NUMBER || '';
-  if (!adminRaw) return false;
-  const adminNum = getPureNumber(adminRaw);
-  const senderNum = getPureNumber(senderJid);
-  return adminNum === senderNum;
+  return invoiceRepo.isAdmin(senderJid);
 }
 
 /**
@@ -59,7 +45,7 @@ async function handleQrisCommand(sock, msg, args, customerJid, customerName, cha
       caption: invoiceText
     }, { quoted: msg });
 
-    // Notifikasi ke nomor Admin
+    // Notifikasi ke nomor / JID Admin
     notifyAdminNewInvoice(sock, invoice);
 
   } catch (err) {
@@ -111,7 +97,7 @@ async function handleInvoiceCommand(sock, msg, args, customerJid, customerName, 
       caption: invoiceText
     }, { quoted: msg });
 
-    // Notifikasi ke nomor Admin
+    // Notifikasi ke nomor / JID Admin
     notifyAdminNewInvoice(sock, invoice);
 
   } catch (err) {
@@ -126,11 +112,8 @@ async function handleInvoiceCommand(sock, msg, args, customerJid, customerName, 
  * Notifikasi ke Admin ketika Invoice baru dibuat
  */
 async function notifyAdminNewInvoice(sock, invoice) {
-  const adminRaw = process.env.ADMIN_NUMBER || '';
-  if (!adminRaw) return;
-
-  const adminPure = getPureNumber(adminRaw);
-  const adminJid = `${adminPure}@s.whatsapp.net`;
+  const adminJid = invoiceRepo.getAdminJid();
+  if (!adminJid) return;
 
   const noticeText = formatAdminInvoiceNotification(invoice);
   try {
@@ -183,8 +166,11 @@ async function handleHistoryCommand(sock, msg, args, senderJid, chatJid) {
   if (isSenderAdmin) {
     invoices = invoiceRepo.listInvoices({ limit });
   } else {
-    const userPure = getPureNumber(senderJid);
-    invoices = invoiceRepo.listInvoices({ limit: 20 }).filter(inv => getPureNumber(inv.customer_jid) === userPure).slice(0, limit);
+    const userPure = invoiceRepo.getPureNumber(senderJid);
+    const userClean = invoiceRepo.cleanJid(senderJid);
+    invoices = invoiceRepo.listInvoices({ limit: 20 }).filter(inv => {
+      return invoiceRepo.getPureNumber(inv.customer_jid) === userPure || invoiceRepo.cleanJid(inv.customer_jid) === userClean;
+    }).slice(0, limit);
   }
 
   if (invoices.length === 0) {
@@ -325,7 +311,6 @@ async function handleSetQrisCommand(sock, msg, args, senderJid, chatJid) {
 
 /**
  * Perintah !help / !bantuan / !menu
- * Format bersih, minimalis, dilengkapi contoh penggunaan dan copyright abyn.xyz
  */
 async function handleHelpCommand(sock, msg, senderJid, chatJid) {
   const isSenderAdmin = isAdmin(senderJid);
@@ -365,7 +350,6 @@ async function handleHelpCommand(sock, msg, senderJid, chatJid) {
 }
 
 module.exports = {
-  getPureNumber,
   isAdmin,
   handleQrisCommand,
   handleInvoiceCommand,

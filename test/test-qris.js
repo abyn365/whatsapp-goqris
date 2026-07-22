@@ -11,7 +11,7 @@ const { convertStaticToDynamic, sanitizeQrisString } = require('../src/qris/conv
 const { generateQRBuffer } = require('../src/qris/qr-generator');
 const invoiceRepo = require('../src/database/invoice-repo');
 const { createInvoiceService, formatRupiah } = require('../src/services/invoice-service');
-const { getRealMessage, getTextFromMessage } = require('../src/bot/message-handler');
+const { getRealMessage, getTextFromMessage } = require('../src/utils/message-utils');
 
 async function runTests() {
   console.log('🧪 Starting Unit & Integration Test Suite...\n');
@@ -55,9 +55,9 @@ async function runTests() {
   // Test 4: Database & Invoice Workflow
   console.log('4️⃣ Testing Database Invoice & Timestamp Recording...');
   const { invoice, invoiceText } = await createInvoiceService({
-    customerJid: '6285117569816:45@s.whatsapp.net',
+    customerJid: '197341567021139@lid',
     customerName: 'Abyn Admin',
-    chatJid: '6285117569816@s.whatsapp.net',
+    chatJid: '197341567021139@lid',
     isGroup: false,
     amount: 75000,
     itemsSummary: 'Kopi Espresso x2, Roti Bakar x1',
@@ -84,12 +84,15 @@ async function runTests() {
   assert.strictEqual(paidInv.status, 'PAID');
   assert.ok(paidInv.paid_at.length > 0, 'Paid timestamp missing');
 
-  // Test 5: Admin JID normalization check
-  console.log('5️⃣ Testing Admin JID Normalization (getPureNumber)...');
-  const pureNum = invoiceRepo.getPureNumber('6285117569816:45@s.whatsapp.net');
-  assert.strictEqual(pureNum, '6285117569816');
-  console.log('   Pure Admin Number:', pureNum);
-  console.log('   ✅ Admin JID Normalization test passed.\n');
+  // Test 5: LID JID & Phone Admin check
+  console.log('5️⃣ Testing LID JID Admin Verification (197341567021139@lid)...');
+  const isAdminLid = invoiceRepo.isAdmin('197341567021139:45@lid');
+  const isAdminPhone = invoiceRepo.isAdmin('6285117569816:12@s.whatsapp.net');
+  console.log('   Is LID JID Admin:', isAdminLid);
+  console.log('   Is Phone JID Admin:', isAdminPhone);
+  assert.strictEqual(isAdminLid, true, 'LID JID admin check failed');
+  assert.strictEqual(isAdminPhone, true, 'Phone JID admin check failed');
+  console.log('   ✅ LID & Phone Admin JID test passed.\n');
 
   console.log('🎉 ALL TESTS COMPLETED SUCCESSFULLY!');
 }
