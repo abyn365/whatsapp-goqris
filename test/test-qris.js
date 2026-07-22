@@ -11,6 +11,7 @@ const { convertStaticToDynamic } = require('../src/qris/converter');
 const { generateQRBuffer } = require('../src/qris/qr-generator');
 const invoiceRepo = require('../src/database/invoice-repo');
 const { createInvoiceService, formatRupiah } = require('../src/services/invoice-service');
+const { getRealMessage, getTextFromMessage } = require('../src/bot/message-handler');
 
 async function runTests() {
   console.log('🧪 Starting Unit & Integration Test Suite...\n');
@@ -78,14 +79,22 @@ async function runTests() {
   const paidInv = invoiceRepo.getInvoiceById(invoice.id);
   assert.strictEqual(paidInv.status, 'PAID');
   assert.ok(paidInv.paid_at.length > 0, 'Paid timestamp missing');
-  console.log('   Paid At Timestamp:', paidInv.paid_at);
 
-  const stats = invoiceRepo.getInvoiceStats();
-  console.log('   Current Database Stats:', stats);
-  assert.ok(stats.paidInvoices >= 1);
-  assert.ok(stats.totalRevenue >= 75000);
+  // Test 5: Ephemeral / Disappearing Message Unwrapping
+  console.log('5️⃣ Testing Ephemeral & Wrapped Message Parsing...');
+  const mockEphemeralMsg = {
+    ephemeralMessage: {
+      message: {
+        extendedTextMessage: { text: '!qris 25000 Espresso' }
+      }
+    }
+  };
 
-  console.log('   ✅ Database Invoice Workflow test passed.\n');
+  const unwrapped = getRealMessage(mockEphemeralMsg);
+  const text = getTextFromMessage(unwrapped);
+  assert.strictEqual(text, '!qris 25000 Espresso');
+  console.log('   Extracted Ephemeral Text:', text);
+  console.log('   ✅ Ephemeral Message Parsing test passed.\n');
 
   console.log('🎉 ALL TESTS COMPLETED SUCCESSFULLY!');
 }

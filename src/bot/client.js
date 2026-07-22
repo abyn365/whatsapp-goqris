@@ -12,6 +12,8 @@ const { handleIncomingMessage } = require('./message-handler');
 
 const AUTH_DIR = path.join(process.cwd(), 'data', 'auth_info_baileys');
 
+let currentSock = null;
+
 async function startWhatsAppBot() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const { version } = await fetchLatestBaileysVersion();
@@ -25,6 +27,8 @@ async function startWhatsAppBot() {
     auth: state,
     generateHighQualityLinkPreview: true
   });
+
+  currentSock = sock;
 
   // Handle credentials update
   sock.ev.on('creds.update', saveCreds);
@@ -41,8 +45,14 @@ async function startWhatsAppBot() {
     }
 
     if (connection === 'close') {
-      const shouldReconnect = (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut);
-      console.log('⚠️ Connection closed due to:', lastDisconnect?.error, ', reconnecting:', shouldReconnect);
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = (statusCode !== DisconnectReason.loggedOut);
+      console.log(`⚠️ Connection closed (statusCode: ${statusCode}). Reconnecting: ${shouldReconnect}...`);
+      
+      try {
+        sock.ev.removeAllListeners();
+      } catch (e) {}
+
       if (shouldReconnect) {
         setTimeout(startWhatsAppBot, 3000);
       }
@@ -55,12 +65,10 @@ async function startWhatsAppBot() {
   sock.ev.on('messages.upsert', async (m) => {
     if (m.type === 'notify') {
       for (const msg of m.messages) {
-        if (!msg.key.fromMe) {
-          try {
-            await handleIncomingMessage(sock, msg);
-          } catch (err) {
-            console.error('Error handling message:', err);
-          }
+        try {
+          await handleIncomingMessage(sock, msg);
+        } catch (err) {
+          console.error('Error processing incoming message:', err);
         }
       }
     }
