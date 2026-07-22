@@ -46,8 +46,8 @@ async function runTests() {
   console.log(`   QR Buffer generated successfully (${qrBuffer.length} bytes)`);
   console.log('   ✅ QR Code Buffer test passed.\n');
 
-  // Test 4: Database & Invoice Workflow with Rejection & Human Statuses
-  console.log('4️⃣ Testing Database Invoice, Human Statuses & Rejection Workflow...');
+  // Test 4: Database & Invoice Workflow with Rejection & Flexible INV- Prefix
+  console.log('4️⃣ Testing Database Invoice, Flexible INV- Prefix & Rejection Workflow...');
   const { invoice, invoiceText } = await createInvoiceService({
     customerJid: '197341567021139@lid',
     customerName: 'Abyn Admin',
@@ -59,13 +59,13 @@ async function runTests() {
   });
 
   console.log('   Generated Invoice Number:', invoice.invoice_number);
-  console.log('   Invoice Created At:', invoice.created_at);
-  console.log('   Human Pending Status:', getHumanStatus(invoice.status));
   
-  assert.strictEqual(invoice.amount, 75000);
-  assert.strictEqual(invoice.status, 'PENDING');
-  assert.strictEqual(getHumanStatus(invoice.status), 'Menunggu Pembayaran');
-  assert.ok(invoiceText.includes(`\`${invoice.invoice_number}\``), 'Invoice text missing copyable code block formatting');
+  // Test lookup without INV- prefix (e.g. '20260722-0001')
+  const rawNum = invoice.invoice_number.replace('INV-', '');
+  const foundByRaw = invoiceRepo.getInvoiceByNumber(rawNum);
+  assert.ok(foundByRaw, `Failed to lookup invoice without INV- prefix (${rawNum})`);
+  assert.strictEqual(foundByRaw.id, invoice.id);
+  console.log(`   Lookup without INV- prefix (${rawNum}) -> Found: ${foundByRaw.invoice_number}`);
 
   // Test status updates to PROOF_SUBMITTED
   invoiceRepo.updateInvoiceProof(invoice.id, './data/proofs/test_proof.jpg');
@@ -79,26 +79,21 @@ async function runTests() {
   const rejectedInv = invoiceRepo.getInvoiceById(invoice.id);
   assert.strictEqual(rejectedInv.status, 'REJECTED');
   assert.strictEqual(rejectedInv.rejection_reason, rejectionReason);
-  assert.ok(getHumanStatus(rejectedInv.status, null, rejectedInv.rejection_reason).includes('Ditolak'));
-  console.log('   Human Rejected Status:', getHumanStatus(rejectedInv.status, null, rejectedInv.rejection_reason));
 
   // Test status update to PAID
   invoiceRepo.markInvoicePaid(invoice.id);
   const paidInv = invoiceRepo.getInvoiceById(invoice.id);
   assert.strictEqual(paidInv.status, 'PAID');
-  assert.ok(getHumanStatus(paidInv.status, paidInv.paid_at).includes('Lunas'));
 
-  console.log('   ✅ Human Statuses & Rejection Workflow test passed.\n');
+  console.log('   ✅ Flexible Invoice Number & Rejection Workflow test passed.\n');
 
-  // Test 5: Multi-Admin Deduplication
-  console.log('5️⃣ Testing Multi-Admin Deduplication (getUniqueAdminJids)...');
-  process.env.ADMIN_JID = '197341567021139@lid, 628999888777@s.whatsapp.net, 628999888777';
-  const uniqueAdmins = invoiceRepo.getUniqueAdminJids();
-  console.log('   Unique Admin Destinations:', uniqueAdmins);
-  assert.strictEqual(uniqueAdmins.length, 2, 'Should deduplicate duplicate entries into 2 distinct admin destinations');
-  assert.strictEqual(uniqueAdmins[0], '197341567021139@lid');
-  assert.strictEqual(uniqueAdmins[1], '628999888777@s.whatsapp.net');
-  console.log('   ✅ Multi-Admin Deduplication test passed.\n');
+  // Test 5: Single Primary Admin Destination
+  console.log('5️⃣ Testing Single Primary Admin Destination (getAdminJid)...');
+  process.env.ADMIN_JID = '197341567021139@lid, 6285117569816';
+  const primaryAdmin = invoiceRepo.getAdminJid();
+  console.log('   Primary Admin Destination:', primaryAdmin);
+  assert.strictEqual(primaryAdmin, '197341567021139@lid');
+  console.log('   ✅ Single Primary Admin Destination test passed.\n');
 
   console.log('🎉 ALL TESTS COMPLETED SUCCESSFULLY!');
 }

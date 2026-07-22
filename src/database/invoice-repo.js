@@ -21,7 +21,7 @@ function getPureNumber(jidOrPhone) {
 }
 
 /**
- * Memeriksa apakah JID pengirim cocok dengan daftar Admin (Mendukung banyak admin)
+ * Memeriksa apakah JID pengirim cocok dengan daftar Admin
  */
 function isAdmin(senderJid) {
   const adminRaw = process.env.ADMIN_JID || process.env.ADMIN_NUMBER || '';
@@ -45,44 +45,27 @@ function isAdmin(senderJid) {
 }
 
 /**
- * Get all distinct physical Admin JIDs (Deduplicates entries pointing to the same admin account)
+ * Get primary single Admin JID for sending notifications (strictly 1 destination to prevent duplicate deliveries)
  */
-function getUniqueAdminJids() {
+function getAdminJid() {
   const adminRaw = process.env.ADMIN_JID || process.env.ADMIN_NUMBER || '';
-  if (!adminRaw) return [];
-  const items = adminRaw.split(',').map(a => a.trim()).filter(Boolean);
-
-  const jids = [];
-  const seenPures = new Set();
-  const seenCleans = new Set();
-
-  for (const item of items) {
-    const cleaned = cleanJid(item);
-    const pure = getPureNumber(item);
-
-    // Skip if this physical admin has already been added
-    if (pure && seenPures.has(pure)) continue;
-    if (cleaned && seenCleans.has(cleaned)) continue;
-
-    if (pure) seenPures.add(pure);
-    if (cleaned) seenCleans.add(cleaned);
-
-    if (cleaned.includes('@')) {
-      jids.push(cleaned);
-    } else if (pure) {
-      jids.push(`${pure}@s.whatsapp.net`);
-    }
+  if (!adminRaw) return '';
+  
+  const firstAdmin = adminRaw.split(',')[0].trim();
+  const cleaned = cleanJid(firstAdmin);
+  if (cleaned.includes('@')) {
+    return cleaned;
   }
-
-  return jids;
+  const pure = getPureNumber(firstAdmin);
+  return pure ? `${pure}@s.whatsapp.net` : '';
 }
 
 /**
- * Get primary single Admin JID for fallback
+ * Get unique admin destinations
  */
-function getAdminJid() {
-  const jids = getUniqueAdminJids();
-  return jids.length > 0 ? jids[0] : '';
+function getUniqueAdminJids() {
+  const primary = getAdminJid();
+  return primary ? [primary] : [];
 }
 
 /**
@@ -183,10 +166,18 @@ function getInvoiceById(id) {
 }
 
 /**
- * Get invoice by Invoice Number (e.g. INV-20260722-0001)
+ * Get invoice by Invoice Number (supports both 'INV-20260722-0001' and '20260722-0001')
  */
-function getInvoiceByNumber(invoiceNumber) {
-  return db.prepare('SELECT * FROM invoices WHERE UPPER(invoice_number) = UPPER(?)').get(invoiceNumber);
+function getInvoiceByNumber(inputStr) {
+  if (!inputStr) return null;
+  let cleanInput = String(inputStr).trim().toUpperCase();
+
+  // Support invoice numbers without 'INV-' prefix (e.g. '20260722-0001' -> 'INV-20260722-0001')
+  if (!cleanInput.startsWith('INV-')) {
+    cleanInput = `INV-${cleanInput}`;
+  }
+
+  return db.prepare('SELECT * FROM invoices WHERE UPPER(invoice_number) = UPPER(?)').get(cleanInput);
 }
 
 /**
