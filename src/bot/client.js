@@ -13,13 +13,30 @@ const { handleIncomingMessage } = require('./message-handler');
 
 const AUTH_DIR = path.join(process.cwd(), 'data', 'auth_info_baileys');
 
-// Suppress Baileys internal signal debug logs ("Closing session: SessionEntry ...")
+// Suppress Baileys internal signal debug logs ("Closing session: SessionEntry ...", "Bad MAC ...")
 const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+
 console.log = function (...args) {
-  if (typeof args[0] === 'string' && args[0].startsWith('Closing session:')) {
+  if (typeof args[0] === 'string' && (
+    args[0].startsWith('Closing session:') ||
+    args[0].startsWith('Failed to decrypt message') ||
+    args[0].includes('Bad MAC')
+  )) {
     return;
   }
   originalConsoleLog.apply(console, args);
+};
+
+console.error = function (...args) {
+  if (typeof args[0] === 'string' && (
+    args[0].includes('Bad MAC') ||
+    args[0].includes('Failed to decrypt message') ||
+    args[0].includes('Session error')
+  )) {
+    return;
+  }
+  originalConsoleError.apply(console, args);
 };
 
 let currentSock = null;
@@ -37,6 +54,9 @@ async function startWhatsAppBot() {
     auth: state,
     syncFullHistory: false,
     generateHighQualityLinkPreview: true,
+    markOnlineOnConnect: true,
+    retryRequestDelayMs: 250,
+    maxMsgRetryCount: 5,
     getMessage: async (key) => {
       return { conversation: '' };
     }
