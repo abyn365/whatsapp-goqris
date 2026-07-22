@@ -13,14 +13,16 @@ const { handleIncomingMessage } = require('./message-handler');
 
 const AUTH_DIR = path.join(process.cwd(), 'data', 'auth_info_baileys');
 
-// Suppress Baileys internal signal debug logs ("Closing session: SessionEntry ...", "Bad MAC ...")
+// Suppress Baileys internal signal debug logs ("Closing session: SessionEntry ...", "Closing open session ...", "Bad MAC ...")
 const originalConsoleLog = console.log;
 const originalConsoleError = console.error;
 
 console.log = function (...args) {
   if (typeof args[0] === 'string' && (
-    args[0].startsWith('Closing session:') ||
-    args[0].startsWith('Failed to decrypt message') ||
+    args[0].includes('Closing session') ||
+    args[0].includes('Closing open session') ||
+    args[0].includes('SessionEntry') ||
+    args[0].includes('Failed to decrypt message') ||
     args[0].includes('Bad MAC')
   )) {
     return;
@@ -30,6 +32,9 @@ console.log = function (...args) {
 
 console.error = function (...args) {
   if (typeof args[0] === 'string' && (
+    args[0].includes('Closing session') ||
+    args[0].includes('Closing open session') ||
+    args[0].includes('SessionEntry') ||
     args[0].includes('Bad MAC') ||
     args[0].includes('Failed to decrypt message') ||
     args[0].includes('Session error')
