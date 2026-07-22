@@ -1,5 +1,5 @@
 const invoiceRepo = require('../database/invoice-repo');
-const { createInvoiceService, formatRupiah, formatAdminInvoiceNotification } = require('../services/invoice-service');
+const { createInvoiceService, formatRupiah, formatInvoiceText, formatAdminInvoiceNotification } = require('../services/invoice-service');
 const { decodeQRFromBuffer } = require('../qris/qr-reader');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 
@@ -40,10 +40,15 @@ async function handleQrisCommand(sock, msg, args, customerJid, customerName, cha
     });
 
     // Kirim HANYA SATU PESAN berupa Gambar QRIS dengan deskripsi (caption) berisi teks invoice lengkap
-    await sock.sendMessage(chatJid, {
+    const sentCustomerMsg = await sock.sendMessage(chatJid, {
       image: qrBuffer,
       caption: invoiceText
     }, { quoted: msg });
+
+    // Simpan customer_msg_key di database untuk pembaharuan status otomatis kelak
+    if (sentCustomerMsg && sentCustomerMsg.key) {
+      invoiceRepo.saveCustomerMsgKey(invoice.id, sentCustomerMsg.key);
+    }
 
     // Notifikasi ke nomor / JID Admin
     notifyAdminNewInvoice(sock, invoice);
@@ -91,13 +96,15 @@ async function handleInvoiceCommand(sock, msg, args, customerJid, customerName, 
       notes
     });
 
-    // Kirim HANYA SATU PESAN berupa Gambar QRIS dengan deskripsi (caption) berisi teks invoice lengkap
-    await sock.sendMessage(chatJid, {
+    const sentCustomerMsg = await sock.sendMessage(chatJid, {
       image: qrBuffer,
       caption: invoiceText
     }, { quoted: msg });
 
-    // Notifikasi ke nomor / JID Admin
+    if (sentCustomerMsg && sentCustomerMsg.key) {
+      invoiceRepo.saveCustomerMsgKey(invoice.id, sentCustomerMsg.key);
+    }
+
     notifyAdminNewInvoice(sock, invoice);
 
   } catch (err) {
@@ -109,17 +116,23 @@ async function handleInvoiceCommand(sock, msg, args, customerJid, customerName, 
 }
 
 /**
- * Notifikasi ke Admin ketika Invoice baru dibuat
+ * Notifikasi ke Admin ketika Invoice baru dibuat (deduplikasi admin JID)
  */
 async function notifyAdminNewInvoice(sock, invoice) {
-  const adminJid = invoiceRepo.getAdminJid();
-  if (!adminJid) return;
+  const adminJids = invoiceRepo.getUniqueAdminJids();
+  if (adminJids.length === 0) return;
 
   const noticeText = formatAdminInvoiceNotification(invoice);
-  try {
-    await sock.sendMessage(adminJid, { text: noticeText });
-  } catch (e) {
-    console.error('Gagal mengirim notifikasi ke admin:', e.message);
+  
+  for (const adminJid of adminJids) {
+    try {
+      const sentAdminMsg = await sock.sendMessage(adminJid, { text: noticeText });
+      if (sentAdminMsg && sentAdminMsg.key) {
+        invoiceRepo.saveAdminMsgKey(invoice.id, sentAdminMsg.key);
+      }
+    } catch (e) {
+      console.error(`Gagal mengirim notifikasi invoice ke admin (${adminJid}):`, e.message);
+    }
   }
 }
 
@@ -196,6 +209,7 @@ async function handleHistoryCommand(sock, msg, args, senderJid, chatJid) {
 
 /**
  * Perintah !markpaid <no_invoice> (Khusus Admin)
+ * Memperbarui status invoice, mengedit pesan notifikasi di admin & pelanggan jika memungkinkan
  */
 async function handleMarkPaidCommand(sock, msg, args, senderJid, chatJid) {
   if (!isAdmin(senderJid)) {
@@ -222,15 +236,44 @@ async function handleMarkPaidCommand(sock, msg, args, senderJid, chatJid) {
   invoiceRepo.markInvoicePaid(invoice.id);
   const updatedInv = invoiceRepo.getInvoiceById(invoice.id);
 
-  // Konfirmasi ke Admin
+  // Edit/perbarui teks notifikasi admin yang ada jika simpanan msg key tersedia
+  if (updatedInv.admin_msg_key) {
+    try {
+      const adminKey = JSON.parse(updatedInv.admin_msg_key);
+      const updatedAdminNotice = formatAdminInvoiceNotification(updatedInv);
+      await sock.sendMessage(adminKey.remoteJid || chatJid, {
+        text: updatedAdminNotice,
+        edit: adminKey
+      });
+    } catch (e) {
+      console.log('Tidak dapat mengedit pesan notifikasi admin lama:', e.message);
+    }
+  }
+
+  // Konfirmasi ke Admin di chat saat ini
   await sock.sendMessage(chatJid, {
     text: `Invoice ${invoice.invoice_number} senilai ${formatRupiah(invoice.amount)} berhasil ditandai LUNAS (PAID).`
   }, { quoted: msg });
 
-  // Notifikasi pelunasan ke pelanggan
+  // Notifikasi pelunasan ke pelanggan (edit pesan invoice asli pelanggan jika ada, atau kirim konfirmasi)
+  const storeName = invoiceRepo.getConfig('store_name', process.env.STORE_NAME || 'ABYN.XYZ DIGITAL & KREATIF');
+  const updatedCustomerInvoiceText = formatInvoiceText(updatedInv, storeName);
+
+  if (updatedInv.customer_msg_key) {
+    try {
+      const customerKey = JSON.parse(updatedInv.customer_msg_key);
+      await sock.sendMessage(customerKey.remoteJid || updatedInv.chat_jid, {
+        text: updatedCustomerInvoiceText,
+        edit: customerKey
+      });
+    } catch (e) {
+      // Fallback kirim pesan lunas baru jika edit caption tidak didukung
+    }
+  }
+
   try {
-    await sock.sendMessage(invoice.chat_jid, {
-      text: `PEMBAYARAN TERKONFIRMASI LUNAS\n\nNo. Invoice: ${invoice.invoice_number}\nTotal: ${formatRupiah(invoice.amount)}\nWaktu Lunas: ${updatedInv.paid_at}\nStatus: LUNAS\n\nTerima kasih atas pembayaran Anda!\n\nabyn.xyz`
+    await sock.sendMessage(updatedInv.chat_jid, {
+      text: `PEMBAYARAN TERKONFIRMASI LUNAS\n\nNo. Invoice: ${updatedInv.invoice_number}\nTotal: ${formatRupiah(updatedInv.amount)}\nWaktu Lunas: ${updatedInv.paid_at}\nStatus: LUNAS\n\nTerima kasih atas pembayaran Anda!\n\nabyn.xyz`
     });
   } catch (err) {
     console.error('Gagal mengirim notifikasi lunas ke pelanggan:', err.message);

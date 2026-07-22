@@ -30,7 +30,7 @@ async function createInvoiceService({
     throw new Error('QRIS Statis Toko belum dikonfigurasi. Silakan hubungi Admin.');
   }
 
-  // Konversi QRIS Statis ke Dinamis dengan nominal (menempatkan Tag 54 setelah Tag 53)
+  // Konversi QRIS Statis ke Dinamis dengan nominal
   const dynamicQris = convertStaticToDynamic(staticQris, amount);
 
   // Simpan record invoice di database
@@ -45,7 +45,7 @@ async function createInvoiceService({
     qrisPayload: dynamicQris
   });
 
-  // Hasikan buffer gambar PNG kode QR
+  // Hasilkan buffer gambar PNG kode QR
   const qrBuffer = await generateQRBuffer(dynamicQris);
 
   // Format teks invoice untuk caption gambar
@@ -60,10 +60,24 @@ async function createInvoiceService({
 }
 
 /**
+ * Format teks status invoice
+ */
+function formatStatusString(status, paidAt) {
+  if (status === 'PAID') {
+    return `LUNAS (Diperbarui pada ${paidAt || 'sekarang'})`;
+  }
+  if (status === 'PROOF_SUBMITTED') {
+    return `PROOF_SUBMITTED (Bukti Dikirim, Menunggu Verifikasi Admin)`;
+  }
+  return `PENDING (Menunggu Pembayaran)`;
+}
+
+/**
  * Format teks invoice sebagai caption gambar tunggal
  */
 function formatInvoiceText(invoice, storeName) {
   const rupiah = formatRupiah(invoice.amount);
+  const statusStr = formatStatusString(invoice.status, invoice.paid_at);
   
   let text = `INVOICE PEMBAYARAN QRIS\n`;
   text += `${storeName}\n`;
@@ -82,12 +96,20 @@ function formatInvoiceText(invoice, storeName) {
 
   text += `----------------------------------------\n`;
   text += `TOTAL TAGIHAN: ${rupiah}\n`;
-  text += `Status: PENDING\n`;
+  text += `Status: ${statusStr}\n`;
   text += `----------------------------------------\n`;
-  text += `PETUNJUK PEMBAYARAN:\n`;
-  text += `1. Scan Kode QRIS pada gambar ini menggunakan aplikasi GoPay, OVO, Dana, ShopeePay, BCA, Mandiri, dll.\n`;
-  text += `2. Pastikan nominal pembayaran sesuai yaitu ${rupiah}.\n`;
-  text += `3. Wajib! Balas (reply) foto QRIS ini dengan mengunggah screenshot bukti pembayaran agar admin memverifikasi.\n`;
+  
+  if (invoice.status === 'PAID') {
+    text += `PEMBAYARAN LUNAS. TERIMA KASIH!\n`;
+  } else if (invoice.status === 'PROOF_SUBMITTED') {
+    text += `Bukti transfer Anda telah dikirim dan sedang dalam proses verifikasi Admin.\n`;
+  } else {
+    text += `PETUNJUK PEMBAYARAN:\n`;
+    text += `1. Scan Kode QRIS pada gambar ini menggunakan aplikasi GoPay, OVO, Dana, ShopeePay, BCA, Mandiri, dll.\n`;
+    text += `2. Pastikan nominal pembayaran sesuai yaitu ${rupiah}.\n`;
+    text += `3. Wajib! Balas (reply) foto QRIS ini dengan mengunggah screenshot bukti pembayaran agar admin memverifikasi.\n`;
+  }
+
   text += `----------------------------------------\n`;
   text += `abyn.xyz`;
 
@@ -95,22 +117,32 @@ function formatInvoiceText(invoice, storeName) {
 }
 
 /**
- * Format teks notifikasi untuk Admin saat invoice baru dibuat
+ * Format teks notifikasi untuk Admin saat invoice baru dibuat / diperbarui
  */
 function formatAdminInvoiceNotification(invoice) {
   const rupiah = formatRupiah(invoice.amount);
-  let text = `NOTIFIKASI INVOICE BARU\n`;
+  const statusStr = formatStatusString(invoice.status, invoice.paid_at);
+
+  let text = `NOTIFIKASI INVOICE TOKO\n`;
   text += `----------------------------------------\n`;
   text += `No. Invoice: ${invoice.invoice_number}\n`;
   text += `Waktu: ${invoice.created_at}\n`;
-  text += `Pelanggan: ${invoice.customer_name} (${invoice.customer_jid.split('@')[0]})\n`;
+  text += `Pelanggan: ${invoice.customer_name} (${invoice.customer_jid})\n`;
   text += `Nominal: ${rupiah}\n`;
   if (invoice.items_summary) {
     text += `Rincian: ${invoice.items_summary}\n`;
   }
-  text += `Status: PENDING\n`;
+  text += `Status: ${statusStr}\n`;
   text += `----------------------------------------\n`;
-  text += `Ketik !markpaid ${invoice.invoice_number} untuk melunasi invoice ini.\n`;
+
+  if (invoice.status === 'PAID') {
+    text += `INVOICE TELAH LUNAS (PAID).\n`;
+  } else if (invoice.status === 'PROOF_SUBMITTED') {
+    text += `Bukti transfer telah dikirim oleh pelanggan.\nKetik !markpaid ${invoice.invoice_number} untuk mengonfirmasi pelunasan.\n`;
+  } else {
+    text += `Menunggu pembayaran dari pelanggan.\nKetik !markpaid ${invoice.invoice_number} jika lunas.\n`;
+  }
+
   text += `abyn.xyz`;
   return text;
 }
@@ -124,8 +156,9 @@ function formatAdminProofNotification(invoice) {
   text += `----------------------------------------\n`;
   text += `No. Invoice: ${invoice.invoice_number}\n`;
   text += `Waktu Invoice: ${invoice.created_at}\n`;
-  text += `Pelanggan: ${invoice.customer_name} (${invoice.customer_jid.split('@')[0]})\n`;
+  text += `Pelanggan: ${invoice.customer_name} (${invoice.customer_jid})\n`;
   text += `Total Tagihan: ${rupiah}\n`;
+  text += `Status: PROOF_SUBMITTED (Menunggu Verifikasi Admin)\n`;
   text += `----------------------------------------\n`;
   text += `Foto bukti transfer terlampir di atas.\n`;
   text += `Ketik !markpaid ${invoice.invoice_number} untuk mengonfirmasi pelunasan.\n`;

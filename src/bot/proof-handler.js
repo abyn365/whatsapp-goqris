@@ -1,7 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const invoiceRepo = require('../database/invoice-repo');
-const { formatAdminProofNotification, formatRupiah } = require('../services/invoice-service');
+const { formatAdminProofNotification, formatInvoiceText, formatRupiah } = require('../services/invoice-service');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { getRealMessage } = require('../utils/message-utils');
 
@@ -48,13 +48,29 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
     invoiceRepo.updateInvoiceProof(invoice.id, filePath);
     const updatedInvoice = invoiceRepo.getInvoiceById(invoice.id);
 
+    // In-place edit of customer invoice text if msg key exists
+    const storeName = invoiceRepo.getConfig('store_name', process.env.STORE_NAME || 'ABYN.XYZ DIGITAL & KREATIF');
+    const updatedCustomerInvoiceText = formatInvoiceText(updatedInvoice, storeName);
+
+    if (updatedInvoice.customer_msg_key) {
+      try {
+        const customerKey = JSON.parse(updatedInvoice.customer_msg_key);
+        await sock.sendMessage(customerKey.remoteJid || chatJid, {
+          text: updatedCustomerInvoiceText,
+          edit: customerKey
+        });
+      } catch (e) {
+        // Fallback if editing image caption is not supported on client
+      }
+    }
+
     // Send confirmation to user in user chat
     await sock.sendMessage(chatJid, {
       text: `✅ Bukti Pembayaran Diterima!\n\nNo. Invoice: ${invoice.invoice_number}\nTotal: ${formatRupiah(invoice.amount)}\nStatus: PROOF_SUBMITTED (Menunggu Verifikasi Admin)\n\nBukti pembayaran Anda telah diteruskan ke Admin untuk diverifikasi.\n\nabyn.xyz`
     }, { quoted: msg });
 
-    // Forward proof screenshot & notification to ALL Admin JIDs
-    const adminJids = invoiceRepo.getAllAdminJids();
+    // Send proof screenshot image + caption notice to UNIQUE Admin JIDs (preventing duplicate delivery to same admin)
+    const adminJids = invoiceRepo.getUniqueAdminJids();
     const adminNoticeText = formatAdminProofNotification(updatedInvoice);
 
     if (adminJids.length === 0) {
@@ -63,10 +79,15 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
 
     for (const adminJid of adminJids) {
       try {
-        await sock.sendMessage(adminJid, {
+        const sentAdminMsg = await sock.sendMessage(adminJid, {
           image: buffer,
           caption: adminNoticeText
         });
+
+        if (sentAdminMsg && sentAdminMsg.key) {
+          invoiceRepo.saveAdminMsgKey(invoice.id, sentAdminMsg.key);
+        }
+
         console.log(`📸 [PROOF] Foto bukti transfer invoice ${invoice.invoice_number} berhasil dikirim ke Admin (${adminJid})`);
       } catch (err) {
         console.error(`⚠️ Gagal mengirim foto bukti ke Admin (${adminJid}):`, err.message);

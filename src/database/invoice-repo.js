@@ -30,7 +30,6 @@ function isAdmin(senderJid) {
   const senderClean = cleanJid(senderJid);
   const senderPure = getPureNumber(senderJid);
 
-  // Split multiple admin entries separated by comma
   const adminList = adminRaw.split(',').map(a => a.trim());
 
   for (const adminItem of adminList) {
@@ -38,10 +37,7 @@ function isAdmin(senderJid) {
     const adminClean = cleanJid(adminItem);
     const adminPure = getPureNumber(adminItem);
 
-    // Clean JID match (e.g. 197341567021139@lid === 197341567021139@lid)
     if (adminClean && senderClean === adminClean) return true;
-
-    // Pure number match (e.g. 6285117569816 === 6285117569816)
     if (adminPure && senderPure === adminPure) return true;
   }
 
@@ -49,31 +45,44 @@ function isAdmin(senderJid) {
 }
 
 /**
- * Get all configured Admin JIDs as an array
+ * Get unique Admin JIDs (deduplicating LID vs Phone JID belonging to the same admin)
  */
-function getAllAdminJids() {
+function getUniqueAdminJids() {
   const adminRaw = process.env.ADMIN_JID || process.env.ADMIN_NUMBER || '';
   if (!adminRaw) return [];
   const items = adminRaw.split(',').map(a => a.trim()).filter(Boolean);
-  const jids = [];
+
+  const uniqueList = [];
+  const seenCleans = new Set();
+  const seenPures = new Set();
 
   for (const item of items) {
     const cleaned = cleanJid(item);
+    const pure = getPureNumber(item);
+
+    // Skip if we already added this admin (by clean JID or pure number)
+    if (cleaned && (seenCleans.has(cleaned) || (pure && seenPures.has(pure)))) {
+      continue;
+    }
+
+    if (cleaned) seenCleans.add(cleaned);
+    if (pure) seenPures.add(pure);
+
     if (cleaned.includes('@')) {
-      jids.push(cleaned);
-    } else {
-      const pure = getPureNumber(item);
-      if (pure) jids.push(`${pure}@s.whatsapp.net`);
+      uniqueList.push(cleaned);
+    } else if (pure) {
+      uniqueList.push(`${pure}@s.whatsapp.net`);
     }
   }
-  return Array.from(new Set(jids));
+
+  return uniqueList;
 }
 
 /**
- * Get primary Admin JID for sending notifications
+ * Get primary Admin JID
  */
 function getAdminJid() {
-  const jids = getAllAdminJids();
+  const jids = getUniqueAdminJids();
   return jids.length > 0 ? jids[0] : '';
 }
 
@@ -149,6 +158,22 @@ function createInvoice({
 
   const lastId = Number(result.lastInsertRowid);
   return getInvoiceById(lastId);
+}
+
+/**
+ * Save Customer Message Key for editing/updates
+ */
+function saveCustomerMsgKey(id, msgKey) {
+  const keyStr = typeof msgKey === 'object' ? JSON.stringify(msgKey) : String(msgKey);
+  return db.prepare('UPDATE invoices SET customer_msg_key = ? WHERE id = ?').run(keyStr, Number(id));
+}
+
+/**
+ * Save Admin Message Key for editing/updates
+ */
+function saveAdminMsgKey(id, msgKey) {
+  const keyStr = typeof msgKey === 'object' ? JSON.stringify(msgKey) : String(msgKey);
+  return db.prepare('UPDATE invoices SET admin_msg_key = ? WHERE id = ?').run(keyStr, Number(id));
 }
 
 /**
@@ -280,10 +305,12 @@ module.exports = {
   getPureNumber,
   isAdmin,
   getAdminJid,
-  getAllAdminJids,
+  getUniqueAdminJids,
   generateInvoiceNumber,
   getCurrentFormattedTimestamp,
   createInvoice,
+  saveCustomerMsgKey,
+  saveAdminMsgKey,
   getInvoiceById,
   getInvoiceByNumber,
   getPendingInvoiceForUser,
