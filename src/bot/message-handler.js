@@ -2,6 +2,7 @@ const {
   handleQrisCommand,
   handleInvoiceCommand,
   handleStatusCommand,
+  handleRecapCommand,
   handleHistoryCommand,
   handleMarkPaidCommand,
   handleRejectCommand,
@@ -91,6 +92,11 @@ async function handleIncomingMessage(sock, msg) {
 
     case 'status':
       await handleStatusCommand(sock, msg, args, customerJid, chatJid);
+      break;
+
+    case 'recap':
+    case 'rekap':
+      await handleRecapCommand(sock, msg, args, customerJid, chatJid);
       break;
 
     case 'history':

@@ -172,7 +172,6 @@ function getInvoiceByNumber(inputStr) {
   if (!inputStr) return null;
   let cleanInput = String(inputStr).trim().toUpperCase();
 
-  // Support invoice numbers without 'INV-' prefix (e.g. '20260722-0001' -> 'INV-20260722-0001')
   if (!cleanInput.startsWith('INV-')) {
     cleanInput = `INV-${cleanInput}`;
   }
@@ -206,6 +205,18 @@ function getPendingInvoiceForUser(customerJid, chatJid) {
   }
 
   return null;
+}
+
+/**
+ * List active and rejected invoices (PENDING, PROOF_SUBMITTED, REJECTED)
+ */
+function getActiveAndRejectedInvoices({ limit = 30 } = {}) {
+  const lim = Number(limit);
+  return db.prepare(`
+    SELECT * FROM invoices 
+    WHERE status IN ('PENDING', 'PROOF_SUBMITTED', 'REJECTED')
+    ORDER BY id DESC LIMIT ?
+  `).all(lim);
 }
 
 /**
@@ -316,6 +327,7 @@ module.exports = {
   getInvoiceById,
   getInvoiceByNumber,
   getPendingInvoiceForUser,
+  getActiveAndRejectedInvoices,
   updateInvoiceProof,
   markInvoicePaid,
   rejectInvoiceProof,

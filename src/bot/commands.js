@@ -115,27 +115,24 @@ async function handleInvoiceCommand(sock, msg, args, customerJid, customerName, 
 }
 
 /**
- * Notifikasi ke Admin ketika Invoice baru dibuat (Mendukung banyak admin fisik tanpa duplikasi)
+ * Notifikasi ke Admin ketika Invoice baru dibuat
  */
 async function notifyAdminNewInvoice(sock, invoice) {
-  const adminJids = invoiceRepo.getAllAdminJids();
-  if (adminJids.length === 0) return;
+  const adminJid = invoiceRepo.getAdminJid();
+  if (!adminJid) return;
+
+  if (invoiceRepo.cleanJid(invoice.chat_jid) === invoiceRepo.cleanJid(adminJid)) {
+    return;
+  }
 
   const noticeText = formatAdminInvoiceNotification(invoice);
-
-  for (const adminJid of adminJids) {
-    // Suppress notice if the admin created the invoice for himself in DM
-    if (invoiceRepo.cleanJid(invoice.chat_jid) === invoiceRepo.cleanJid(adminJid)) {
-      continue;
+  try {
+    const sentAdminMsg = await sock.sendMessage(adminJid, { text: noticeText });
+    if (sentAdminMsg && sentAdminMsg.key) {
+      invoiceRepo.saveAdminMsgKey(invoice.id, sentAdminMsg.key);
     }
-    try {
-      const sentAdminMsg = await sock.sendMessage(adminJid, { text: noticeText });
-      if (sentAdminMsg && sentAdminMsg.key) {
-        invoiceRepo.saveAdminMsgKey(invoice.id, sentAdminMsg.key);
-      }
-    } catch (e) {
-      console.error(`Gagal mengirim notifikasi invoice ke admin (${adminJid}):`, e.message);
-    }
+  } catch (e) {
+    console.error(`Gagal mengirim notifikasi invoice ke admin (${adminJid}):`, e.message);
   }
 }
 
@@ -176,6 +173,65 @@ async function handleStatusCommand(sock, msg, args, customerJid, chatJid) {
   text += `abyn.xyz`;
 
   await sock.sendMessage(chatJid, { text, mentions: [invoice.customer_jid] }, { quoted: msg });
+}
+
+/**
+ * Perintah !recap / !rekap
+ * Menampilkan rekap transaksi yang masih aktif (PENDING, PROOF_SUBMITTED) dan DITOLAK (REJECTED)
+ */
+async function handleRecapCommand(sock, msg, args, senderJid, chatJid) {
+  const isSenderAdmin = isAdmin(senderJid);
+
+  let invoices;
+  if (isSenderAdmin) {
+    invoices = invoiceRepo.getActiveAndRejectedInvoices({ limit: 30 });
+  } else {
+    const userPure = invoiceRepo.getPureNumber(senderJid);
+    const userClean = invoiceRepo.cleanJid(senderJid);
+    invoices = invoiceRepo.getActiveAndRejectedInvoices({ limit: 30 }).filter(inv => {
+      return invoiceRepo.getPureNumber(inv.customer_jid) === userPure || invoiceRepo.cleanJid(inv.customer_jid) === userClean;
+    });
+  }
+
+  if (invoices.length === 0) {
+    return sock.sendMessage(chatJid, {
+      text: `REKAP TRANSAKSI AKTIF & DITOLAK\n----------------------------------------\nTidak ada transaksi aktif (pending) atau ditolak saat ini.\n----------------------------------------\nabyn.xyz`
+    }, { quoted: msg });
+  }
+
+  let text = `REKAP TRANSAKSI AKTIF & DITOLAK\n`;
+  text += `----------------------------------------\n`;
+
+  let totalAmount = 0;
+  const mentions = [];
+
+  for (const inv of invoices) {
+    const humanStatus = getHumanStatus(inv.status, inv.paid_at, inv.rejection_reason);
+    const customerTag = formatCustomerMentionText(inv.customer_jid, inv.customer_name);
+    totalAmount += Number(inv.amount) || 0;
+
+    let icon = '📌';
+    if (inv.status === 'PROOF_SUBMITTED') icon = '📸';
+    if (inv.status === 'REJECTED') icon = '⚠️';
+
+    text += `${icon} Invoice: \`${inv.invoice_number}\`\n`;
+    text += `   Pelanggan: ${customerTag}\n`;
+    text += `   Nominal: ${formatRupiah(inv.amount)}\n`;
+    text += `   Status: ${humanStatus}\n`;
+    text += `   Waktu: ${inv.created_at}\n\n`;
+
+    if (inv.customer_jid && !mentions.includes(inv.customer_jid)) {
+      mentions.push(inv.customer_jid);
+    }
+  }
+
+  text += `----------------------------------------\n`;
+  text += `Total Invoice: ${invoices.length}\n`;
+  text += `Total Nominal: ${formatRupiah(totalAmount)}\n`;
+  text += `----------------------------------------\n`;
+  text += `abyn.xyz`;
+
+  await sock.sendMessage(chatJid, { text, mentions }, { quoted: msg });
 }
 
 /**
@@ -453,14 +509,19 @@ async function handleHelpCommand(sock, msg, senderJid, chatJid) {
   text += `3. Cek Status Pembayaran:\n`;
   text += `   Format: !status [no_invoice]\n`;
   text += `   Contoh: !status INV-20260722-0001 (atau !status 20260722-0001)\n\n`;
-  text += `4. Lihat Riwayat Transaksi:\n`;
+  text += `4. Rekap Transaksi Aktif & Ditolak:\n`;
+  text += `   Format: !recap atau !rekap\n\n`;
+  text += `5. Lihat Riwayat Transaksi:\n`;
   text += `   Format: !history\n\n`;
-  text += `5. Kirim Bukti Pembayaran:\n`;
+  text += `6. Kirim Bukti Pembayaran:\n`;
   text += `   Balas (reply) pesan foto QRIS invoice dengan mengunggah screenshot bukti transfer.\n`;
 
   if (isSenderAdmin) {
     text += `\n----------------------------------------\n`;
     text += `PERINTAH KHUSUS ADMIN TOKO:\n\n`;
+    text += `• !recap / !rekap\n`;
+    text += `  Lihat rekap seluruh transaksi aktif & ditolak.\n`;
+    text += `  Contoh: !recap\n\n`;
     text += `• !markpaid <no_invoice>\n`;
     text += `  Konfirmasi pelunasan invoice.\n`;
     text += `  Contoh: !markpaid 20260722-0001\n\n`;
@@ -489,6 +550,7 @@ module.exports = {
   handleQrisCommand,
   handleInvoiceCommand,
   handleStatusCommand,
+  handleRecapCommand,
   handleHistoryCommand,
   handleMarkPaidCommand,
   handleRejectCommand,

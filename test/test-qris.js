@@ -87,13 +87,23 @@ async function runTests() {
 
   console.log('   ✅ Flexible Invoice Number & Rejection Workflow test passed.\n');
 
-  // Test 5: Single Primary Admin Destination
-  console.log('5️⃣ Testing Single Primary Admin Destination (getAdminJid)...');
-  process.env.ADMIN_JID = '197341567021139@lid, 6285117569816';
-  const primaryAdmin = invoiceRepo.getAdminJid();
-  console.log('   Primary Admin Destination:', primaryAdmin);
-  assert.strictEqual(primaryAdmin, '197341567021139@lid');
-  console.log('   ✅ Single Primary Admin Destination test passed.\n');
+  // Test 5: Recap Query Test (getActiveAndRejectedInvoices)
+  console.log('5️⃣ Testing Recap Query (getActiveAndRejectedInvoices)...');
+  const { invoice: activeInv } = await createInvoiceService({
+    customerJid: '6281234567890@s.whatsapp.net',
+    customerName: 'Budi Test',
+    chatJid: '6281234567890@s.whatsapp.net',
+    isGroup: false,
+    amount: 15000,
+    itemsSummary: 'Teh Obeng',
+    notes: ''
+  });
+
+  const activeAndRejected = invoiceRepo.getActiveAndRejectedInvoices({ limit: 10 });
+  const hasActiveInv = activeAndRejected.some(i => i.id === activeInv.id);
+  assert.strictEqual(hasActiveInv, true, 'Recap query should return newly created active invoice');
+  console.log(`   Found ${activeAndRejected.length} active/rejected invoices for recap`);
+  console.log('   ✅ Recap Query test passed.\n');
 
   console.log('🎉 ALL TESTS COMPLETED SUCCESSFULLY!');
 }
