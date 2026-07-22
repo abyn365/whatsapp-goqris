@@ -1,6 +1,6 @@
 # WhatsApp Indonesia Dynamic QRIS & Invoicing Bot 🇮🇩
 
-WhatsApp Bot untuk memproses pembayaran **QRIS Indonesia**, mengubah **QRIS Statis menjadi QRIS Dinamis** (dengan nominal transaksi yang tersemat otomatis), membuat invoice terstruktur dengan timestamp presisi, mengelola riwayat transaksi, serta meneruskan foto bukti transfer ke nomor WhatsApp Admin.
+WhatsApp Bot untuk memproses pembayaran **QRIS Indonesia**, mengubah **QRIS Statis menjadi QRIS Dinamis** (dengan nominal transaksi yang tersemat otomatis secara sah sesuai spesifikasi EMVCo), membuat invoice terstruktur dengan timestamp presisi, mengelola riwayat transaksi, melakukan penolakan/pelunasan pembayaran, serta meneruskan foto bukti transfer ke Admin Toko secara real-time.
 
 Dilengkapi dengan manajemen **PM2** untuk deployment server produksi yang handal 24/7.
 
@@ -8,20 +8,24 @@ Dilengkapi dengan manajemen **PM2** untuk deployment server produksi yang handal
 
 ## 🌟 Fitur Utama
 
-- 🔄 **QRIS Statis ke Dinamis**: Mengubah QRIS Statis merchant menjadi QRIS Dinamis sesuai spesifikasi EMVCo / Bank Indonesia. Mengubah Tag `01` ke `12`, menyisipkan Tag `54` (nominal tagihan), dan menghitung ulang **CRC16-CCITT Checksum**.
-- 🖼️ **Gambar Kode QRIS Otomatis**: Menghasilkan gambar QR code (PNG) resolusi tinggi dan mengirimkannya sebagai lampiran gambar di WhatsApp.
-- 🧾 **Sistem Invoicing Terstruktur**:
-  - Timestamp waktu transaksi presisi (`DD/MM/YYYY HH:mm:ss WIB`).
-  - Mendukung rincian barang/layanan (`!invoice <nominal> | <rincian> | [catatan]`).
-  - Nomor Invoice unik otomatis (contoh: `INV-20260722-0001`).
+- 🔄 **QRIS Statis ke Dinamis (EMVCo Compliant)**: 
+  Mengubah QRIS Statis merchant menjadi QRIS Dinamis sesuai spesifikasi Bank Indonesia & EMVCo Standard. Mengubah Tag `01` ke `12`, menyisipkan Tag `54` (nominal tagihan) tepat setelah Tag `53` (mata uang IDR `360`), dan menghitung ulang **CRC16-CCITT Checksum (0x1021)**.
+- 🖼️ **Gambar Kode QRIS Otomatis dalam 1 Pesan**: 
+  Menghasilkan gambar QR code (PNG) resolusi tinggi dan mengirimkannya sebagai lampiran gambar di WhatsApp dengan caption deskripsi invoice terstruktur lengkap.
+- 📋 **Nomor Invoice Monospaced (1-Tap Copy)**:
+  Nomor invoice diformat sebagai inline code block (contoh: `INV-20260722-0001`) sehingga pelanggan atau admin cukup men-tap 1x di WhatsApp untuk menyalin nomor invoice secara instan.
+- 🔖 **Pencarian Nomor Invoice Fleksibel (Tanpa Prefix `INV-`)**:
+  Perintah bot seperti `!markpaid`, `!reject`, dan `!status` mendukung nomor invoice tanpa mengetik prefix `INV-` (contoh: `!markpaid 20260722-0001` atau `!markpaid INV-20260722-0001`).
+- 🏷️ **Tag / Mention Pelanggan Otomatis**:
+  Dalam obrolan grup (*group chat*), bot secara otomatis men-tag (`@nomor`) pengguna pelanggan saat menerbitkan invoice, mengonfirmasi bukti transfer, melunasi, atau menolak pembayaran agar pesan tidak tertukar antar-pelanggan.
+- 👥 **Dukungan Banyak Admin (Multi-Admin)**:
+  Mendukung lebih dari 1 nomor/JID Admin (LID JID `@lid` atau nomor HP `@s.whatsapp.net`). Seluruh Admin terdaftar dapat mengeksekusi perintah admin dan menerima notifikasi dengan deduplikasi pintar tanpa spam.
+- ❌ **Fitur Penolakan Bukti Transfer (`!reject`)**:
+  Admin dapat menolak bukti transfer yang tidak jelas atau tidak valid dengan memberikan alasan penolakan (`!reject <no_invoice> [alasan]`). Bot otomatis memperbarui status dan meminta pelanggan mengirim ulang bukti yang valid.
+- 📊 **Perintah Rekap Transaksi (`!recap` / `!rekap`)**:
+  Merangkum seluruh transaksi yang sedang **aktif (pending / verifikasi)** dan **ditolak** beserta akumulasi total nominal tagihan dan tag pengguna.
 - 📸 **Deteksi & Forward Bukti Transfer**:
-  - Pelanggan cukup mengirimkan / membalas pesan invoice dengan foto screenshot bukti pembayaran.
-  - Bot otomatis mendeteksi invoice pending pelanggan, mengunggah bukti ke folder lokal, dan **meneruskan foto bukti ke WhatsApp Admin** beserta detail transaksi dan tombol konfirmasi cepat.
-- 👑 **Fitur khusus Admin**:
-  - Konfirmasi pelunasan invoice (`!markpaid <no_invoice>`).
-  - Cek statistik omset / penjualan (`!stats`).
-  - Lihat riwayat transaksi (`!history`).
-  - Update QRIS Statis toko langsung dari pesan atau foto QRIS (`!setqris`).
+  Pelanggan cukup membalas (*reply*) foto pesan QRIS invoice dengan foto screenshot bukti pembayaran. Bot otomatis meneruskan foto bukti ke Admin toko.
 - 💬 **Dukungan Group & Private Chat (DM)**: Bekerja di grup WhatsApp (`@g.us`) maupun Chat Pribadi (`@s.whatsapp.net`).
 - 🚀 **PM2 Deployment Manager**: Konfigurasi `ecosystem.config.js` untuk manajemen proses background, auto-restart, dan rotasi log.
 
@@ -39,7 +43,7 @@ d:/goqris/
 │   ├── index.js          # Entry point utama aplikasi
 │   ├── bot/              # Klien WhatsApp Baileys & Router Pesan
 │   │   ├── client.js           # Socket WhatsApp & pairing QR terminal
-│   │   ├── commands.js         # Logika penanganan perintah (!qris, !invoice, dll)
+│   │   ├── commands.js         # Logika penanganan perintah (!qris, !invoice, !reject, !recap, dll)
 │   │   ├── message-handler.js  # Router pesan DM & Group
 │   │   └── proof-handler.js    # Penanganan foto screenshot bukti transfer
 │   ├── database/         # Penyimpanan database SQLite (Node native sqlite)
@@ -77,11 +81,13 @@ npm install
 ### 3. Konfigurasi Environment (`.env`)
 Buat file `.env` berdasarkan `.env.example`:
 ```ini
-# Nomor WhatsApp Admin (format internasional tanpa +, contoh: 6281234567890)
-ADMIN_NUMBER=6281234567890
+# Admin WhatsApp JID atau Nomor HP (Mendukung banyak admin, pisahkan dengan koma)
+# Contoh admin tunggal: ADMIN_JID=197341567021139@lid
+# Contoh banyak admin:  ADMIN_JID=197341567021139@lid, 628999888777@s.whatsapp.net
+ADMIN_JID=197341567021139@lid
 
 # String Payload QRIS Statis Toko
-DEFAULT_STATIC_QRIS=00020101021126680016ID.CO.QRIS.WWW01189360091400000000000215ID10265535641090303A0151440014ID.LINKAJA.WWW01189360091400000000005204581253033605802ID5910ABYN.XYZ, 6013KOTA JAKARTA 61051234562070703A0163048D64
+DEFAULT_STATIC_QRIS=00020101021126610014COM.GO-JEK.WWW01189360091434842069580210G4842069580303UMI51440014ID.CO.QRIS.WWW0215ID10265535641090303UMI5204899953033605802ID5925ABYN.XYZ, Digital & Kreat6006BANTUL61055575262070703A0163045B58
 
 # Nama Toko / Usaha
 STORE_NAME=ABYN.XYZ DIGITAL & KREATIF
@@ -135,22 +141,26 @@ npm run stop:pm2
 
 ## 📖 Panduan Perintah (Commands Reference)
 
-### Perintah Umum (Dapat digunakan Pelanggan di Group & DM)
+### Perintah Umum (Pelanggan & Admin di Group & DM)
 | Perintah | Deskripsi | Contoh |
 | :--- | :--- | :--- |
 | `!qris <nominal> [keterangan]` | Buat QRIS Dinamis cepat beserta gambar QR. | `!qris 15000 Kopi Susu` |
 | `!invoice <nominal> \| <rincian> \| [catatan]` | Buat invoice terstruktur lengkap dengan rincian barang. | `!invoice 50000 \| Kopi Susu x2, Roti x1 \| Tanpa Gula` |
-| `!status [no_invoice]` | Cek status invoice (PENDING, PROOF_SUBMITTED, PAID). | `!status INV-20260722-0001` |
+| `!status [no_invoice]` | Cek status invoice (Menunggu Pembayaran, Verifikasi Admin, Lunas, Ditolak). | `!status 20260722-0001` |
+| `!recap` / `!rekap` | Rekap daftar transaksi aktif (pending) & ditolak (rejected). | `!recap` |
 | `!history` | Lihat riwayat transaksi terakhir. | `!history` |
-| `📸 Kirim Foto` | Balas/kirim screenshot bukti transfer ke chat. | *(Kirim gambar)* |
+| `📸 Balas Foto` | Balas (reply) foto QRIS invoice dengan mengunggah screenshot bukti transfer. | *(Kirim gambar)* |
 | `!help` | Tampilkan menu bantuan bot. | `!help` |
 
-### Perintah Khusus Admin (`ADMIN_NUMBER`)
+### Perintah Khusus Admin (`ADMIN_JID`)
 | Perintah Admin | Deskripsi | Contoh |
 | :--- | :--- | :--- |
-| `!markpaid <no_invoice>` | Konfirmasi pembayaran invoice menjadi **PAID / LUNAS** dan beri tahu pelanggan. | `!markpaid INV-20260722-0001` |
-| `!stats` | Lihat ringkasan omset penjualan, total invoice lunas & pending. | `!stats` |
-| `!setqris <string_qris>` | Perbarui string QRIS Statis Toko. Bisa juga dengan mengirim foto QRIS + caption `!setqris`. | `!setqris 000201010211...` |
+| `!markpaid <no_invoice>` | Konfirmasi pelunasan invoice menjadi **LUNAS** dan beri tahu pelanggan. | `!markpaid 20260722-0001` |
+| `!reject <no_invoice> [alasan]` | Tolak bukti pembayaran dengan alasan penolakan dan minta screenshot baru. | `!reject 20260722-0001 Foto buram` |
+| `!recap` / `!rekap` | Lihat rekap seluruh transaksi aktif & ditolak dari semua pelanggan toko. | `!recap` |
+| `!stats` | Lihat ringkasan omset penjualan toko, total invoice lunas, pending, & ditolak. | `!stats` |
+| `!setqris <string_atau_foto>` | Update QRIS Statis Toko dari teks atau foto QRIS dengan caption `!setqris`. | `!setqris 000201010211...` |
+| `!history [limit]` | Lihat riwayat transaksi seluruh pelanggan. | `!history 10` |
 
 ---
 
@@ -158,11 +168,16 @@ npm run stop:pm2
 
 Seluruh pengujian teknis mencakup:
 1. **Perhitungan Checksum CRC16-CCITT**.
-2. **Konversi Tag TLV EMVCo (01->12, Tag 54 nominal)**.
+2. **Konversi Tag TLV EMVCo (01->12, Tag 54 nominal setelah Tag 53)**.
 3. **Pembangkitan Buffer Gambar PNG Kode QR**.
-4. **Pencatatan Timestamp & Status Invoice pada Database SQLite**.
+4. **Pencarian Nomor Invoice Tanpa Prefix `INV-`**.
+5. **Alur Penolakan (`!reject`) & Rekap Transaksi (`!recap`)**.
+6. **Deduplikasi Notifikasi Multiple Admin (`ADMIN_JID`)**.
 
 Untuk menjalankan pengujian:
 ```bash
 npm test
 ```
+
+---
+*Copyright © abyn.xyz*
