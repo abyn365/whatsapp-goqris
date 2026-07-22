@@ -44,25 +44,33 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
     const filePath = path.join(proofDir, filename);
     fs.writeFileSync(filePath, buffer);
 
-    // Update DB
+    // Update DB status to PROOF_SUBMITTED
     invoiceRepo.updateInvoiceProof(invoice.id, filePath);
+    const updatedInvoice = invoiceRepo.getInvoiceById(invoice.id);
 
-    // Send confirmation to user
+    // Send confirmation to user in user chat
     await sock.sendMessage(chatJid, {
-      text: `✅ Bukti Pembayaran Diterima!\n\nNo. Invoice: ${invoice.invoice_number}\nTotal: ${formatRupiah(invoice.amount)}\n\nBukti pembayaran Anda telah diteruskan ke Admin untuk diverifikasi.\n\nabyn.xyz`
+      text: `✅ Bukti Pembayaran Diterima!\n\nNo. Invoice: ${invoice.invoice_number}\nTotal: ${formatRupiah(invoice.amount)}\nStatus: PROOF_SUBMITTED (Menunggu Verifikasi Admin)\n\nBukti pembayaran Anda telah diteruskan ke Admin untuk diverifikasi.\n\nabyn.xyz`
     }, { quoted: msg });
 
-    // Forward proof screenshot & notification to Admin
-    const adminRaw = process.env.ADMIN_NUMBER || '';
-    if (adminRaw) {
-      const adminPure = invoiceRepo.getPureNumber(adminRaw);
-      const adminJid = `${adminPure}@s.whatsapp.net`;
-      const adminNoticeText = formatAdminProofNotification(invoice);
+    // Forward proof screenshot & notification to ALL Admin JIDs
+    const adminJids = invoiceRepo.getAllAdminJids();
+    const adminNoticeText = formatAdminProofNotification(updatedInvoice);
 
-      await sock.sendMessage(adminJid, {
-        image: buffer,
-        caption: adminNoticeText
-      });
+    if (adminJids.length === 0) {
+      console.log('⚠️ [PROOF] ADMIN_JID belum dikonfigurasi di .env!');
+    }
+
+    for (const adminJid of adminJids) {
+      try {
+        await sock.sendMessage(adminJid, {
+          image: buffer,
+          caption: adminNoticeText
+        });
+        console.log(`📸 [PROOF] Foto bukti transfer invoice ${invoice.invoice_number} berhasil dikirim ke Admin (${adminJid})`);
+      } catch (err) {
+        console.error(`⚠️ Gagal mengirim foto bukti ke Admin (${adminJid}):`, err.message);
+      }
     }
 
     return true;

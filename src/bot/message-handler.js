@@ -14,11 +14,26 @@ const { getRealMessage, getTextFromMessage } = require('../utils/message-utils')
 
 const BOT_PREFIX = process.env.BOT_PREFIX || '!';
 
+// Message deduplication cache
+const processedMessageIds = new Set();
+
 /**
  * Parses and routes incoming WhatsApp messages
  */
 async function handleIncomingMessage(sock, msg) {
-  if (!msg || !msg.message) return;
+  if (!msg || !msg.message || !msg.key || !msg.key.id) return;
+
+  const msgId = msg.key.id;
+  if (processedMessageIds.has(msgId)) {
+    return; // Skip duplicate event delivery
+  }
+  processedMessageIds.add(msgId);
+
+  // Clean memory if cache grows large
+  if (processedMessageIds.size > 1000) {
+    const arr = Array.from(processedMessageIds);
+    arr.slice(0, 500).forEach(id => processedMessageIds.delete(id));
+  }
 
   const chatJid = msg.key.remoteJid;
   // Ignore status broadcast updates

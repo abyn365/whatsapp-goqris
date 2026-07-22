@@ -12,6 +12,15 @@ const { handleIncomingMessage } = require('./message-handler');
 
 const AUTH_DIR = path.join(process.cwd(), 'data', 'auth_info_baileys');
 
+// Suppress Baileys internal signal debug logs ("Closing session: SessionEntry ...")
+const originalConsoleLog = console.log;
+console.log = function (...args) {
+  if (typeof args[0] === 'string' && args[0].startsWith('Closing session:')) {
+    return;
+  }
+  originalConsoleLog.apply(console, args);
+};
+
 let currentSock = null;
 
 async function startWhatsAppBot() {

@@ -49,18 +49,32 @@ function isAdmin(senderJid) {
 }
 
 /**
+ * Get all configured Admin JIDs as an array
+ */
+function getAllAdminJids() {
+  const adminRaw = process.env.ADMIN_JID || process.env.ADMIN_NUMBER || '';
+  if (!adminRaw) return [];
+  const items = adminRaw.split(',').map(a => a.trim()).filter(Boolean);
+  const jids = [];
+
+  for (const item of items) {
+    const cleaned = cleanJid(item);
+    if (cleaned.includes('@')) {
+      jids.push(cleaned);
+    } else {
+      const pure = getPureNumber(item);
+      if (pure) jids.push(`${pure}@s.whatsapp.net`);
+    }
+  }
+  return Array.from(new Set(jids));
+}
+
+/**
  * Get primary Admin JID for sending notifications
  */
 function getAdminJid() {
-  const adminRaw = process.env.ADMIN_JID || process.env.ADMIN_NUMBER || '';
-  if (!adminRaw) return '';
-  const firstAdmin = adminRaw.split(',')[0].trim();
-  const cleaned = cleanJid(firstAdmin);
-  if (cleaned.includes('@')) {
-    return cleaned;
-  }
-  const pure = getPureNumber(firstAdmin);
-  return pure ? `${pure}@s.whatsapp.net` : '';
+  const jids = getAllAdminJids();
+  return jids.length > 0 ? jids[0] : '';
 }
 
 /**
@@ -266,6 +280,7 @@ module.exports = {
   getPureNumber,
   isAdmin,
   getAdminJid,
+  getAllAdminJids,
   generateInvoiceNumber,
   getCurrentFormattedTimestamp,
   createInvoice,
