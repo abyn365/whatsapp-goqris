@@ -1,0 +1,37 @@
+{
+  "name": "whatsapp-qris-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp Bot for Indonesia QRIS payment converting static QRIS to dynamic QRIS with invoicing, proof forwarding, admin history, and PM2 deployment.",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node test/test-qris.js",
+    "start:pm2": "pm2 start ecosystem.config.js",
+    "stop:pm2": "pm2 stop ecosystem.config.js",
+    "restart:pm2": "pm2 restart ecosystem.config.js",
+    "logs": "pm2 logs whatsapp-qris-bot",
+    "status:pm2": "pm2 status"
+  },
+  "keywords": [
+    "qris",
+    "whatsapp-bot",
+    "baileys",
+    "emvco",
+    "qris-dynamic",
+    "invoice",
+    "pm2"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.12",
+    "dotenv": "^16.4.7",
+    "jimp": "^1.6.0",
+    "jsqr": "^1.4.0",
+    "pino": "^9.6.0",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
