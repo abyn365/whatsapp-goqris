@@ -8,6 +8,7 @@ const {
 const qrcode = require('qrcode-terminal');
 const pino = require('pino');
 const path = require('path');
+const fs = require('fs');
 const { handleIncomingMessage } = require('./message-handler');
 
 const AUTH_DIR = path.join(process.cwd(), 'data', 'auth_info_baileys');
@@ -34,7 +35,11 @@ async function startWhatsAppBot() {
     logger: pino({ level: 'silent' }),
     printQRInTerminal: false,
     auth: state,
-    generateHighQualityLinkPreview: true
+    syncFullHistory: false,
+    generateHighQualityLinkPreview: true,
+    getMessage: async (key) => {
+      return { conversation: '' };
+    }
   });
 
   currentSock = sock;
@@ -55,14 +60,22 @@ async function startWhatsAppBot() {
 
     if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const shouldReconnect = (statusCode !== DisconnectReason.loggedOut);
-      console.log(`⚠️ Connection closed (statusCode: ${statusCode}). Reconnecting: ${shouldReconnect}...`);
+      const isLoggedOut = (statusCode === DisconnectReason.loggedOut || statusCode === 401);
+      console.log(`⚠️ Connection closed (statusCode: ${statusCode}). Logged Out: ${isLoggedOut}...`);
       
       try {
         sock.ev.removeAllListeners();
       } catch (e) {}
 
-      if (shouldReconnect) {
+      if (isLoggedOut) {
+        console.log('🔒 WhatsApp Session Logged Out / Invalidated (401). Clearing auth directory and restarting to generate new QR Code...');
+        try {
+          fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+        } catch (e) {
+          console.error('Failed to clear auth directory:', e.message);
+        }
+        setTimeout(startWhatsAppBot, 2000);
+      } else {
         setTimeout(startWhatsAppBot, 3000);
       }
     } else if (connection === 'open') {
