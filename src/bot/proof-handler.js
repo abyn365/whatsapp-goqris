@@ -3,6 +3,7 @@ const fs = require('fs');
 const invoiceRepo = require('../database/invoice-repo');
 const { formatAdminProofNotification, formatRupiah } = require('../services/invoice-service');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { getRealMessage } = require('../utils/message-utils');
 
 const proofDir = path.join(process.cwd(), 'data', 'proofs');
 if (!fs.existsSync(proofDir)) {
@@ -11,12 +12,26 @@ if (!fs.existsSync(proofDir)) {
 
 /**
  * Handles image media messages as payment proofs
+ * ONLY triggers if:
+ * 1. The image message is a reply (quoted message) to the invoice/QRIS message
+ * 2. The exact user ID (customerJid) has an active pending invoice
  */
 async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
-  // Find recent pending or proof_submitted invoice
-  const invoice = invoiceRepo.getLatestPendingInvoice(customerJid, chatJid);
+  const realMsg = getRealMessage(msg.message);
+  if (!realMsg || !realMsg.imageMessage) return false;
+
+  // 1. Check if the image message is a reply to another message (quoted message)
+  const contextInfo = realMsg.imageMessage.contextInfo;
+  if (!contextInfo || !contextInfo.quotedMessage) {
+    // Image sent without replying to invoice message -> Ignore as regular image
+    return false;
+  }
+
+  // 2. Verify that the exact user ID (customerJid) has an active pending invoice
+  const invoice = invoiceRepo.getPendingInvoiceForUser(customerJid, chatJid);
   if (!invoice) {
-    return false; // No pending invoice found for this user/chat
+    console.log(`ℹ️ [PROOF] Gambar balasan diterima dari ${customerJid}, tetapi pengguna ini tidak memiliki invoice pending.`);
+    return false;
   }
 
   try {
@@ -34,16 +49,14 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
 
     // Send confirmation to user
     await sock.sendMessage(chatJid, {
-      text: `✅ *Bukti Pembayaran Diterima!*\n\nNo. Invoice: \`${invoice.invoice_number}\`\nTotal: *${formatRupiah(invoice.amount)}*\n\nBukti pembayaran Anda telah diteruskan ke Admin untuk diverifikasi. Anda akan menerima konfirmasi setelah disetujui.`
+      text: `✅ Bukti Pembayaran Diterima!\n\nNo. Invoice: ${invoice.invoice_number}\nTotal: ${formatRupiah(invoice.amount)}\n\nBukti pembayaran Anda telah diteruskan ke Admin untuk diverifikasi.\n\nabyn.xyz`
     }, { quoted: msg });
 
     // Forward proof screenshot & notification to Admin
     const adminRaw = process.env.ADMIN_NUMBER || '';
     if (adminRaw) {
-      const adminJid = adminRaw.includes('@s.whatsapp.net') 
-        ? adminRaw 
-        : `${adminRaw.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
-
+      const adminPure = invoiceRepo.getPureNumber(adminRaw);
+      const adminJid = `${adminPure}@s.whatsapp.net`;
       const adminNoticeText = formatAdminProofNotification(invoice);
 
       await sock.sendMessage(adminJid, {

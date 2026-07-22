@@ -1,6 +1,15 @@
 const db = require('./db');
 
 /**
+ * Normalisasi nomor HP atau JID ke string angka murni
+ */
+function getPureNumber(jidOrPhone) {
+  if (!jidOrPhone) return '';
+  const clean = jidOrPhone.split(':')[0].split('@')[0];
+  return clean.replace(/[^0-9]/g, '');
+}
+
+/**
  * Generate unique Invoice Number (e.g. INV-20260722-0001)
  */
 function generateInvoiceNumber() {
@@ -48,6 +57,7 @@ function createInvoice({
 }) {
   const invoiceNumber = generateInvoiceNumber();
   const createdAt = getCurrentFormattedTimestamp();
+  const pureNum = getPureNumber(customerJid);
 
   const stmt = db.prepare(`
     INSERT INTO invoices (
@@ -59,7 +69,7 @@ function createInvoice({
   const result = stmt.run(
     invoiceNumber,
     customerJid,
-    customerName || customerJid.split('@')[0],
+    customerName || pureNum,
     chatJid,
     isGroup ? 1 : 0,
     amount,
@@ -88,14 +98,31 @@ function getInvoiceByNumber(invoiceNumber) {
 }
 
 /**
- * Get active/latest pending invoice for a user or chat
+ * Get active/latest pending invoice specifically for a user (matching user ID / JID)
  */
-function getLatestPendingInvoice(customerJid, chatJid) {
-  return db.prepare(`
+function getPendingInvoiceForUser(customerJid, chatJid) {
+  const pureUser = getPureNumber(customerJid);
+  const rows = db.prepare(`
     SELECT * FROM invoices 
-    WHERE (customer_jid = ? OR chat_jid = ?) AND status IN ('PENDING', 'PROOF_SUBMITTED')
-    ORDER BY id DESC LIMIT 1
-  `).get(customerJid, chatJid);
+    WHERE status IN ('PENDING', 'PROOF_SUBMITTED')
+    ORDER BY id DESC
+  `).all();
+
+  for (const row of rows) {
+    const rowUser = getPureNumber(row.customer_jid);
+    if (rowUser === pureUser && (row.chat_jid === chatJid || !chatJid)) {
+      return row;
+    }
+  }
+
+  // Fallback: match by pure user ID anywhere
+  for (const row of rows) {
+    if (getPureNumber(row.customer_jid) === pureUser) {
+      return row;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -181,12 +208,13 @@ function setConfig(key, value) {
 }
 
 module.exports = {
+  getPureNumber,
   generateInvoiceNumber,
   getCurrentFormattedTimestamp,
   createInvoice,
   getInvoiceById,
   getInvoiceByNumber,
-  getLatestPendingInvoice,
+  getPendingInvoiceForUser,
   updateInvoiceProof,
   markInvoicePaid,
   listInvoices,

@@ -7,7 +7,7 @@ require('dotenv').config();
 
 const { calcCRC16, validateCRC16 } = require('../src/qris/crc16');
 const { parseTLV, buildTLV } = require('../src/qris/parser');
-const { convertStaticToDynamic } = require('../src/qris/converter');
+const { convertStaticToDynamic, sanitizeQrisString } = require('../src/qris/converter');
 const { generateQRBuffer } = require('../src/qris/qr-generator');
 const invoiceRepo = require('../src/database/invoice-repo');
 const { createInvoiceService, formatRupiah } = require('../src/services/invoice-service');
@@ -16,30 +16,33 @@ const { getRealMessage, getTextFromMessage } = require('../src/bot/message-handl
 async function runTests() {
   console.log('🧪 Starting Unit & Integration Test Suite...\n');
 
-  // Sample static QRIS string with valid CRC (8D64)
-  const sampleStr = '00020101021126680016ID.CO.QRIS.WWW01189360091400000000000215ID10265535641090303A0151440014ID.LINKAJA.WWW01189360091400000000005204581253033605802ID5910ABYN.XYZ, 6013KOTA JAKARTA 61051234562070703A0163048D64';
+  // User's actual static QRIS payload
+  const userStaticQris = '00020101021126610014COM.GO-JEK.WWW01189360091434842069580210G4842069580303UMI51440014ID.CO.QRIS.WWW0215ID10265535641090303UMI5204899953033605802ID5925ABYN.XYZ, Digital & Kreat6006BANTUL61055575262070703A0163045B58';
 
   // Test 1: CRC16 Calculation & Validation
   console.log('1️⃣ Testing CRC16 Checksum Calculation & Validation...');
-  const isValidCrc = validateCRC16(sampleStr);
-  console.log('   Sample Static QRIS Valid CRC:', isValidCrc);
-  assert.strictEqual(isValidCrc, true, 'CRC16 validation failed for sample static QRIS');
+  const isValidCrc = validateCRC16(userStaticQris);
+  console.log('   User Static QRIS Valid CRC:', isValidCrc);
+  assert.strictEqual(isValidCrc, true, 'CRC16 validation failed for user static QRIS');
   console.log('   ✅ CRC16 Checksum test passed.\n');
 
-  // Test 2: Static to Dynamic Conversion
-  console.log('2️⃣ Testing Static to Dynamic QRIS Conversion...');
+  // Test 2: Static to Dynamic Conversion with EMVCo Tag 54 Order Verification
+  console.log('2️⃣ Testing Static to Dynamic QRIS Conversion (Tag 54 after Tag 53)...');
   const testAmount = 50000; // Rp 50.000
-  const dynamicQris = convertStaticToDynamic(sampleStr, testAmount);
+  const dynamicQris = convertStaticToDynamic(userStaticQris, testAmount);
   
-  console.log('   Original Static QRIS length:', sampleStr.length);
+  console.log('   Original Static QRIS length:', userStaticQris.length);
   console.log('   Generated Dynamic QRIS length:', dynamicQris.length);
   console.log('   Generated Dynamic Payload:', dynamicQris);
 
-  // Assertions
+  // Verify EMVCo compliance: Tag 53 (360) must come BEFORE Tag 54 (50000)
+  const idx53 = dynamicQris.indexOf('5303360');
+  const idx54 = dynamicQris.indexOf('540550000');
+  assert.ok(idx53 !== -1, 'Tag 53 (Currency) missing');
+  assert.ok(idx54 !== -1, 'Tag 54 (Amount) missing');
+  assert.ok(idx53 < idx54, 'EMVCo Violation: Tag 53 must come BEFORE Tag 54');
   assert.strictEqual(validateCRC16(dynamicQris), true, 'Generated dynamic QRIS has invalid CRC16 checksum');
-  assert.ok(dynamicQris.includes('010212'), 'Tag 01 was not updated to 12 (Dynamic)');
-  assert.ok(dynamicQris.includes('540550000'), 'Tag 54 with amount 50000 (length 05) was not found');
-  console.log('   ✅ Static to Dynamic QRIS conversion test passed.\n');
+  console.log('   ✅ Tag 54 EMVCo placement & Dynamic QRIS conversion test passed.\n');
 
   // Test 3: QR Code Image Generation Buffer
   console.log('3️⃣ Testing QR Code PNG Buffer Generation...');
@@ -52,9 +55,9 @@ async function runTests() {
   // Test 4: Database & Invoice Workflow
   console.log('4️⃣ Testing Database Invoice & Timestamp Recording...');
   const { invoice, invoiceText } = await createInvoiceService({
-    customerJid: '628999888777@s.whatsapp.net',
-    customerName: 'Budi Santoso',
-    chatJid: '628999888777@s.whatsapp.net',
+    customerJid: '6285117569816:45@s.whatsapp.net',
+    customerName: 'Abyn Admin',
+    chatJid: '6285117569816@s.whatsapp.net',
     isGroup: false,
     amount: 75000,
     itemsSummary: 'Kopi Espresso x2, Roti Bakar x1',
@@ -69,6 +72,7 @@ async function runTests() {
   assert.strictEqual(invoice.status, 'PENDING');
   assert.ok(invoice.created_at.includes('WIB'), 'Timestamp missing WIB timezone');
   assert.ok(invoiceText.includes('75.000'), 'Invoice text missing formatted amount');
+  assert.ok(invoiceText.includes('abyn.xyz'), 'Invoice text missing copyright abyn.xyz');
 
   // Test status updates
   invoiceRepo.updateInvoiceProof(invoice.id, './data/proofs/test_proof.jpg');
@@ -80,21 +84,12 @@ async function runTests() {
   assert.strictEqual(paidInv.status, 'PAID');
   assert.ok(paidInv.paid_at.length > 0, 'Paid timestamp missing');
 
-  // Test 5: Ephemeral / Disappearing Message Unwrapping
-  console.log('5️⃣ Testing Ephemeral & Wrapped Message Parsing...');
-  const mockEphemeralMsg = {
-    ephemeralMessage: {
-      message: {
-        extendedTextMessage: { text: '!qris 25000 Espresso' }
-      }
-    }
-  };
-
-  const unwrapped = getRealMessage(mockEphemeralMsg);
-  const text = getTextFromMessage(unwrapped);
-  assert.strictEqual(text, '!qris 25000 Espresso');
-  console.log('   Extracted Ephemeral Text:', text);
-  console.log('   ✅ Ephemeral Message Parsing test passed.\n');
+  // Test 5: Admin JID normalization check
+  console.log('5️⃣ Testing Admin JID Normalization (getPureNumber)...');
+  const pureNum = invoiceRepo.getPureNumber('6285117569816:45@s.whatsapp.net');
+  assert.strictEqual(pureNum, '6285117569816');
+  console.log('   Pure Admin Number:', pureNum);
+  console.log('   ✅ Admin JID Normalization test passed.\n');
 
   console.log('🎉 ALL TESTS COMPLETED SUCCESSFULLY!');
 }

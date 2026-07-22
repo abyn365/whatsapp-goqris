@@ -2,6 +2,14 @@ const { parseTLV, buildTLV } = require('./parser');
 const { calcCRC16 } = require('./crc16');
 
 /**
+ * Clean QRIS string by stripping extra quotes or spaces
+ */
+function sanitizeQrisString(qrisStr) {
+  if (!qrisStr) return '';
+  return String(qrisStr).trim().replace(/^["']|["']$/g, '');
+}
+
+/**
  * Converts a Static QRIS payload string to a Dynamic QRIS payload string with a given amount.
  * 
  * @param {string} staticQris - The static QRIS string
@@ -9,7 +17,8 @@ const { calcCRC16 } = require('./crc16');
  * @returns {string} Dynamic QRIS string
  */
 function convertStaticToDynamic(staticQris, amount) {
-  if (!staticQris || typeof staticQris !== 'string') {
+  const cleanQris = sanitizeQrisString(staticQris);
+  if (!cleanQris) {
     throw new Error('Payload QRIS Statis tidak valid.');
   }
 
@@ -20,10 +29,7 @@ function convertStaticToDynamic(staticQris, amount) {
   }
   const amountStr = String(numAmount);
 
-  // Clean string whitespace
-  const cleanQris = staticQris.trim();
   const tlvItems = parseTLV(cleanQris);
-
   if (tlvItems.length === 0) {
     throw new Error('Format QRIS tidak dapat di-parse.');
   }
@@ -49,20 +55,23 @@ function convertStaticToDynamic(staticQris, amount) {
     }
   }
 
-  // If Tag 01 wasn't found, insert it at the beginning after Tag 00
+  // If Tag 01 wasn't found, insert it after Tag 00
   if (!tag01Found) {
     const idx00 = newItems.findIndex(i => i.tag === '00');
     const insertIdx = idx00 !== -1 ? idx00 + 1 : 0;
     newItems.splice(insertIdx, 0, { tag: '01', value: '12' });
   }
 
-  // If Tag 54 wasn't found, insert it before Tag 58, 59, 60, or at appropriate position
+  // If Tag 54 wasn't found, insert it directly AFTER Tag 53 (Transaction Currency)
   if (!tag54Found) {
-    let insertIdx = newItems.findIndex(i => i.tag === '58' || i.tag === '59' || i.tag === '53');
-    if (insertIdx === -1) {
-      insertIdx = newItems.length;
+    const idx53 = newItems.findIndex(i => i.tag === '53');
+    if (idx53 !== -1) {
+      newItems.splice(idx53 + 1, 0, { tag: '54', value: amountStr });
+    } else {
+      const idxNext = newItems.findIndex(i => i.tag === '58' || i.tag === '59' || i.tag === '60');
+      const insertIdx = idxNext !== -1 ? idxNext : newItems.length;
+      newItems.splice(insertIdx, 0, { tag: '54', value: amountStr });
     }
-    newItems.splice(insertIdx, 0, { tag: '54', value: amountStr });
   }
 
   // Rebuild string without CRC
@@ -75,5 +84,6 @@ function convertStaticToDynamic(staticQris, amount) {
 }
 
 module.exports = {
+  sanitizeQrisString,
   convertStaticToDynamic
 };

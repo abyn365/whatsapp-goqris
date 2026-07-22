@@ -1,4 +1,4 @@
-const { convertStaticToDynamic } = require('../qris/converter');
+const { convertStaticToDynamic, sanitizeQrisString } = require('../qris/converter');
 const { generateQRBuffer } = require('../qris/qr-generator');
 const invoiceRepo = require('../database/invoice-repo');
 
@@ -23,12 +23,14 @@ async function createInvoiceService({
   notes
 }) {
   // Ambil payload QRIS statis dari konfigurasi toko
-  const staticQris = invoiceRepo.getConfig('static_qris', process.env.DEFAULT_STATIC_QRIS || '');
+  const rawStaticQris = invoiceRepo.getConfig('static_qris', process.env.DEFAULT_STATIC_QRIS || '');
+  const staticQris = sanitizeQrisString(rawStaticQris);
+
   if (!staticQris) {
     throw new Error('QRIS Statis Toko belum dikonfigurasi. Silakan hubungi Admin.');
   }
 
-  // Konversi QRIS Statis ke Dinamis dengan nominal
+  // Konversi QRIS Statis ke Dinamis dengan nominal (menempatkan Tag 54 setelah Tag 53)
   const dynamicQris = convertStaticToDynamic(staticQris, amount);
 
   // Simpan record invoice di database
@@ -43,7 +45,7 @@ async function createInvoiceService({
     qrisPayload: dynamicQris
   });
 
-  // Hasilkan buffer gambar PNG kode QR
+  // Hasikan buffer gambar PNG kode QR
   const qrBuffer = await generateQRBuffer(dynamicQris);
 
   // Format teks invoice untuk caption gambar
@@ -63,31 +65,31 @@ async function createInvoiceService({
 function formatInvoiceText(invoice, storeName) {
   const rupiah = formatRupiah(invoice.amount);
   
-  let text = `🧾 *INVOICE PEMBAYARAN QRIS*\n`;
-  text += `🏛️ *${storeName}*\n`;
-  text += `──────────────────────\n`;
-  text += `📌 *No. Invoice:* \`${invoice.invoice_number}\`\n`;
-  text += `🕒 *Waktu Transaksi:* ${invoice.created_at}\n`;
-  text += `👤 *Pelanggan:* ${invoice.customer_name}\n`;
+  let text = `INVOICE PEMBAYARAN QRIS\n`;
+  text += `${storeName}\n`;
+  text += `----------------------------------------\n`;
+  text += `No. Invoice: ${invoice.invoice_number}\n`;
+  text += `Waktu Transaksi: ${invoice.created_at}\n`;
+  text += `Pelanggan: ${invoice.customer_name}\n`;
 
   if (invoice.items_summary) {
-    text += `📦 *Rincian Pesanan:* ${invoice.items_summary}\n`;
+    text += `Rincian Pesanan: ${invoice.items_summary}\n`;
   }
 
   if (invoice.notes) {
-    text += `📝 *Catatan:* ${invoice.notes}\n`;
+    text += `Catatan: ${invoice.notes}\n`;
   }
 
-  text += `──────────────────────\n`;
-  text += `💰 *TOTAL TAGIHAN: ${rupiah}*\n`;
-  text += `Status: ⏳ *PENDING*\n`;
-  text += `──────────────────────\n`;
-  text += `📲 *PETUNJUK PEMBAYARAN:*\n`;
+  text += `----------------------------------------\n`;
+  text += `TOTAL TAGIHAN: ${rupiah}\n`;
+  text += `Status: PENDING\n`;
+  text += `----------------------------------------\n`;
+  text += `PETUNJUK PEMBAYARAN:\n`;
   text += `1. Scan Kode QRIS pada gambar ini menggunakan aplikasi GoPay, OVO, Dana, ShopeePay, BCA, Mandiri, dll.\n`;
-  text += `2. Pastikan nominal pembayaran sesuai yaitu *${rupiah}*.\n`;
-  text += `3. *Wajib!* Kirim screenshot bukti transfer/pembayaran ke chat ini agar admin dapat memverifikasi.\n`;
-  text += `──────────────────────\n`;
-  text += `_Terima kasih telah bertransaksi!_`;
+  text += `2. Pastikan nominal pembayaran sesuai yaitu ${rupiah}.\n`;
+  text += `3. Wajib! Balas (reply) foto QRIS ini dengan mengunggah screenshot bukti pembayaran agar admin memverifikasi.\n`;
+  text += `----------------------------------------\n`;
+  text += `abyn.xyz`;
 
   return text;
 }
@@ -97,18 +99,19 @@ function formatInvoiceText(invoice, storeName) {
  */
 function formatAdminInvoiceNotification(invoice) {
   const rupiah = formatRupiah(invoice.amount);
-  let text = `🔔 *NOTIFIKASI INVOICE BARU*\n`;
-  text += `──────────────────────\n`;
-  text += `No. Invoice: \`${invoice.invoice_number}\`\n`;
+  let text = `NOTIFIKASI INVOICE BARU\n`;
+  text += `----------------------------------------\n`;
+  text += `No. Invoice: ${invoice.invoice_number}\n`;
   text += `Waktu: ${invoice.created_at}\n`;
   text += `Pelanggan: ${invoice.customer_name} (${invoice.customer_jid.split('@')[0]})\n`;
-  text += `Nominal: *${rupiah}*\n`;
+  text += `Nominal: ${rupiah}\n`;
   if (invoice.items_summary) {
     text += `Rincian: ${invoice.items_summary}\n`;
   }
-  text += `Status: ⏳ PENDING\n`;
-  text += `──────────────────────\n`;
-  text += `_Ketik \`!markpaid ${invoice.invoice_number}\` untuk melunasi invoice ini._`;
+  text += `Status: PENDING\n`;
+  text += `----------------------------------------\n`;
+  text += `Ketik !markpaid ${invoice.invoice_number} untuk melunasi invoice ini.\n`;
+  text += `abyn.xyz`;
   return text;
 }
 
@@ -117,15 +120,16 @@ function formatAdminInvoiceNotification(invoice) {
  */
 function formatAdminProofNotification(invoice) {
   const rupiah = formatRupiah(invoice.amount);
-  let text = `📸 *BUKTI PEMBAYARAN DITERIMA*\n`;
-  text += `──────────────────────\n`;
-  text += `No. Invoice: \`${invoice.invoice_number}\`\n`;
+  let text = `BUKTI PEMBAYARAN DITERIMA\n`;
+  text += `----------------------------------------\n`;
+  text += `No. Invoice: ${invoice.invoice_number}\n`;
   text += `Waktu Invoice: ${invoice.created_at}\n`;
   text += `Pelanggan: ${invoice.customer_name} (${invoice.customer_jid.split('@')[0]})\n`;
-  text += `Total Tagihan: *${rupiah}*\n`;
-  text += `──────────────────────\n`;
+  text += `Total Tagihan: ${rupiah}\n`;
+  text += `----------------------------------------\n`;
   text += `Foto bukti transfer terlampir di atas.\n`;
-  text += `Ketik \`!markpaid ${invoice.invoice_number}\` untuk mengonfirmasi pelunasan.`;
+  text += `Ketik !markpaid ${invoice.invoice_number} untuk mengonfirmasi pelunasan.\n`;
+  text += `abyn.xyz`;
   return text;
 }
 
