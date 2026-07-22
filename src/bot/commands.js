@@ -115,24 +115,27 @@ async function handleInvoiceCommand(sock, msg, args, customerJid, customerName, 
 }
 
 /**
- * Notifikasi ke Admin ketika Invoice baru dibuat
+ * Notifikasi ke Admin ketika Invoice baru dibuat (Mendukung banyak admin fisik tanpa duplikasi)
  */
 async function notifyAdminNewInvoice(sock, invoice) {
-  const adminJid = invoiceRepo.getAdminJid();
-  if (!adminJid) return;
-
-  if (invoiceRepo.cleanJid(invoice.chat_jid) === invoiceRepo.cleanJid(adminJid)) {
-    return;
-  }
+  const adminJids = invoiceRepo.getAllAdminJids();
+  if (adminJids.length === 0) return;
 
   const noticeText = formatAdminInvoiceNotification(invoice);
-  try {
-    const sentAdminMsg = await sock.sendMessage(adminJid, { text: noticeText });
-    if (sentAdminMsg && sentAdminMsg.key) {
-      invoiceRepo.saveAdminMsgKey(invoice.id, sentAdminMsg.key);
+
+  for (const adminJid of adminJids) {
+    // Suppress notice if the admin created the invoice for himself in DM
+    if (invoiceRepo.cleanJid(invoice.chat_jid) === invoiceRepo.cleanJid(adminJid)) {
+      continue;
     }
-  } catch (e) {
-    console.error(`Gagal mengirim notifikasi invoice ke admin (${adminJid}):`, e.message);
+    try {
+      const sentAdminMsg = await sock.sendMessage(adminJid, { text: noticeText });
+      if (sentAdminMsg && sentAdminMsg.key) {
+        invoiceRepo.saveAdminMsgKey(invoice.id, sentAdminMsg.key);
+      }
+    } catch (e) {
+      console.error(`Gagal mengirim notifikasi invoice ke admin (${adminJid}):`, e.message);
+    }
   }
 }
 
@@ -227,7 +230,7 @@ async function handleMarkPaidCommand(sock, msg, args, senderJid, chatJid) {
 
   if (!args || args.length === 0) {
     return sock.sendMessage(chatJid, {
-      text: `Format: !markpaid <no_invoice>\nContoh: !markpaid INV-20260722-0001`
+      text: `Format: !markpaid <no_invoice>\nContoh: !markpaid 20260722-0001`
     }, { quoted: msg });
   }
 
@@ -299,7 +302,7 @@ async function handleRejectCommand(sock, msg, args, senderJid, chatJid) {
 
   if (!args || args.length === 0) {
     return sock.sendMessage(chatJid, {
-      text: `Format: !reject <no_invoice> [alasan]\nContoh: !reject INV-20260722-0001 Foto bukti transfer tidak jelas`
+      text: `Format: !reject <no_invoice> [alasan]\nContoh: !reject 20260722-0001 Foto bukti transfer tidak jelas`
     }, { quoted: msg });
   }
 
