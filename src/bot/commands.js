@@ -1,5 +1,5 @@
 const invoiceRepo = require('../database/invoice-repo');
-const { createInvoiceService, formatRupiah, formatInvoiceText, formatAdminInvoiceNotification, getHumanStatus } = require('../services/invoice-service');
+const { createInvoiceService, formatRupiah, formatInvoiceText, formatAdminInvoiceNotification, getHumanStatus, formatCustomerMentionText } = require('../services/invoice-service');
 const { decodeQRFromBuffer } = require('../qris/qr-reader');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 
@@ -39,17 +39,16 @@ async function handleQrisCommand(sock, msg, args, customerJid, customerName, cha
       notes: ''
     });
 
-    // Kirim HANYA SATU PESAN berupa Gambar QRIS dengan deskripsi (caption) berisi teks invoice lengkap
     const sentCustomerMsg = await sock.sendMessage(chatJid, {
       image: qrBuffer,
-      caption: invoiceText
+      caption: invoiceText,
+      mentions: [customerJid]
     }, { quoted: msg });
 
     if (sentCustomerMsg && sentCustomerMsg.key) {
       invoiceRepo.saveCustomerMsgKey(invoice.id, sentCustomerMsg.key);
     }
 
-    // Notifikasi ke Admin
     notifyAdminNewInvoice(sock, invoice);
 
   } catch (err) {
@@ -97,7 +96,8 @@ async function handleInvoiceCommand(sock, msg, args, customerJid, customerName, 
 
     const sentCustomerMsg = await sock.sendMessage(chatJid, {
       image: qrBuffer,
-      caption: invoiceText
+      caption: invoiceText,
+      mentions: [customerJid]
     }, { quoted: msg });
 
     if (sentCustomerMsg && sentCustomerMsg.key) {
@@ -118,24 +118,21 @@ async function handleInvoiceCommand(sock, msg, args, customerJid, customerName, 
  * Notifikasi ke Admin ketika Invoice baru dibuat
  */
 async function notifyAdminNewInvoice(sock, invoice) {
-  const adminJids = invoiceRepo.getUniqueAdminJids();
-  if (adminJids.length === 0) return;
+  const adminJid = invoiceRepo.getAdminJid();
+  if (!adminJid) return;
+
+  if (invoiceRepo.cleanJid(invoice.chat_jid) === invoiceRepo.cleanJid(adminJid)) {
+    return;
+  }
 
   const noticeText = formatAdminInvoiceNotification(invoice);
-  
-  for (const adminJid of adminJids) {
-    // Supress redundant notice if admin created invoice for himself in DM
-    if (invoiceRepo.cleanJid(invoice.chat_jid) === invoiceRepo.cleanJid(adminJid)) {
-      continue;
+  try {
+    const sentAdminMsg = await sock.sendMessage(adminJid, { text: noticeText });
+    if (sentAdminMsg && sentAdminMsg.key) {
+      invoiceRepo.saveAdminMsgKey(invoice.id, sentAdminMsg.key);
     }
-    try {
-      const sentAdminMsg = await sock.sendMessage(adminJid, { text: noticeText });
-      if (sentAdminMsg && sentAdminMsg.key) {
-        invoiceRepo.saveAdminMsgKey(invoice.id, sentAdminMsg.key);
-      }
-    } catch (e) {
-      console.error(`Gagal mengirim notifikasi invoice ke admin (${adminJid}):`, e.message);
-    }
+  } catch (e) {
+    console.error(`Gagal mengirim notifikasi invoice ke admin (${adminJid}):`, e.message);
   }
 }
 
@@ -157,13 +154,14 @@ async function handleStatusCommand(sock, msg, args, customerJid, chatJid) {
   }
 
   const humanStatus = getHumanStatus(invoice.status, invoice.paid_at, invoice.rejection_reason);
+  const customerTag = formatCustomerMentionText(invoice.customer_jid, invoice.customer_name);
 
   let text = `DETAIL INVOICE\n`;
   text += `----------------------------------------\n`;
   text += `No. Invoice: \`${invoice.invoice_number}\`\n`;
   text += `Nominal Tagihan: ${formatRupiah(invoice.amount)}\n`;
   text += `Waktu Dibuat: ${invoice.created_at}\n`;
-  text += `Pelanggan: ${invoice.customer_name}\n`;
+  text += `Pelanggan: ${customerTag}\n`;
   text += `Status Saat Ini: ${humanStatus}\n`;
   if (invoice.paid_at) {
     text += `Waktu Lunas: ${invoice.paid_at}\n`;
@@ -174,7 +172,7 @@ async function handleStatusCommand(sock, msg, args, customerJid, chatJid) {
   text += `----------------------------------------\n`;
   text += `abyn.xyz`;
 
-  await sock.sendMessage(chatJid, { text }, { quoted: msg });
+  await sock.sendMessage(chatJid, { text, mentions: [invoice.customer_jid] }, { quoted: msg });
 }
 
 /**
@@ -271,15 +269,18 @@ async function handleMarkPaidCommand(sock, msg, args, senderJid, chatJid) {
       const customerKey = JSON.parse(updatedInv.customer_msg_key);
       await sock.sendMessage(customerKey.remoteJid || updatedInv.chat_jid, {
         text: updatedCustomerInvoiceText,
-        edit: customerKey
+        edit: customerKey,
+        mentions: [updatedInv.customer_jid]
       });
     } catch (e) {}
   }
 
-  // Kirim notifikasi pelunasan ke pelanggan
+  // Kirim notifikasi pelunasan ke pelanggan dengan tag mention
+  const customerTag = formatCustomerMentionText(updatedInv.customer_jid, updatedInv.customer_name);
   try {
     await sock.sendMessage(updatedInv.chat_jid, {
-      text: `PEMBAYARAN TERKONFIRMASI LUNAS\n\nNo. Invoice: \`${updatedInv.invoice_number}\`\nTotal: ${formatRupiah(updatedInv.amount)}\nWaktu Lunas: ${updatedInv.paid_at}\nStatus: Lunas\n\nTerima kasih atas pembayaran Anda!\n\nabyn.xyz`
+      text: `PEMBAYARAN TERKONFIRMASI LUNAS\n\nPelanggan: ${customerTag}\nNo. Invoice: \`${updatedInv.invoice_number}\`\nTotal: ${formatRupiah(updatedInv.amount)}\nWaktu Lunas: ${updatedInv.paid_at}\nStatus: Lunas\n\nTerima kasih atas pembayaran Anda!\n\nabyn.xyz`,
+      mentions: [updatedInv.customer_jid]
     });
   } catch (err) {
     console.error('Gagal mengirim notifikasi lunas ke pelanggan:', err.message);
@@ -341,15 +342,18 @@ async function handleRejectCommand(sock, msg, args, senderJid, chatJid) {
       const customerKey = JSON.parse(updatedInv.customer_msg_key);
       await sock.sendMessage(customerKey.remoteJid || updatedInv.chat_jid, {
         text: updatedCustomerInvoiceText,
-        edit: customerKey
+        edit: customerKey,
+        mentions: [updatedInv.customer_jid]
       });
     } catch (e) {}
   }
 
-  // Kirim notifikasi penolakan ke pelanggan
+  // Kirim notifikasi penolakan ke pelanggan dengan tag mention
+  const customerTag = formatCustomerMentionText(updatedInv.customer_jid, updatedInv.customer_name);
   try {
     await sock.sendMessage(updatedInv.chat_jid, {
-      text: `PEMBAYARAN DITOLAK\n\nNo. Invoice: \`${updatedInv.invoice_number}\`\nTotal: ${formatRupiah(updatedInv.amount)}\nStatus: Ditolak\nAlasan: ${reason}\n\nSilakan balas (reply) foto QRIS invoice dengan mengunggah screenshot bukti pembayaran yang baru dan jelas.\n\nabyn.xyz`
+      text: `PEMBAYARAN DITOLAK\n\nPelanggan: ${customerTag}\nNo. Invoice: \`${updatedInv.invoice_number}\`\nTotal: ${formatRupiah(updatedInv.amount)}\nStatus: Ditolak\nAlasan: ${reason}\n\nSilakan balas (reply) foto QRIS invoice dengan mengunggah screenshot bukti pembayaran yang baru dan jelas.\n\nabyn.xyz`,
+      mentions: [updatedInv.customer_jid]
     });
   } catch (err) {
     console.error('Gagal mengirim notifikasi penolakan ke pelanggan:', err.message);
@@ -445,7 +449,7 @@ async function handleHelpCommand(sock, msg, senderJid, chatJid) {
   text += `   Contoh: !invoice 50000 | Kopi Susu x2, Roti x1 | Tanpa Gula\n\n`;
   text += `3. Cek Status Pembayaran:\n`;
   text += `   Format: !status [no_invoice]\n`;
-  text += `   Contoh: !status INV-20260722-0001\n\n`;
+  text += `   Contoh: !status INV-20260722-0001 (atau !status 20260722-0001)\n\n`;
   text += `4. Lihat Riwayat Transaksi:\n`;
   text += `   Format: !history\n\n`;
   text += `5. Kirim Bukti Pembayaran:\n`;
@@ -456,10 +460,10 @@ async function handleHelpCommand(sock, msg, senderJid, chatJid) {
     text += `PERINTAH KHUSUS ADMIN TOKO:\n\n`;
     text += `• !markpaid <no_invoice>\n`;
     text += `  Konfirmasi pelunasan invoice.\n`;
-    text += `  Contoh: !markpaid INV-20260722-0001\n\n`;
+    text += `  Contoh: !markpaid 20260722-0001\n\n`;
     text += `• !reject <no_invoice> [alasan]\n`;
     text += `  Tolak bukti pembayaran dengan alasan penolakan.\n`;
-    text += `  Contoh: !reject INV-20260722-0001 Foto bukti buram\n\n`;
+    text += `  Contoh: !reject 20260722-0001 Foto bukti buram\n\n`;
     text += `• !stats\n`;
     text += `  Lihat statistik omset penjualan & transaksi toko.\n`;
     text += `  Contoh: !stats\n\n`;

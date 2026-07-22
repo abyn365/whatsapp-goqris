@@ -27,6 +27,17 @@ function getHumanStatus(status, paidAt, rejectionReason) {
 }
 
 /**
+ * Format tag pelanggan untuk mention di WhatsApp
+ */
+function formatCustomerMentionText(customerJid, customerName) {
+  const pureNum = invoiceRepo.getPureNumber(customerJid);
+  if (pureNum) {
+    return `@${pureNum} (${customerName || pureNum})`;
+  }
+  return customerName || 'Pelanggan';
+}
+
+/**
  * Buat invoice baru dan hasilkan buffer gambar QRIS dinamis
  */
 async function createInvoiceService({
@@ -76,18 +87,18 @@ async function createInvoiceService({
 
 /**
  * Format teks invoice sebagai caption gambar tunggal
- * No. Invoice ditulis dalam format kode (`INV-xxxx`) untuk memudahkan 1-tap copy di WhatsApp
  */
 function formatInvoiceText(invoice, storeName) {
   const rupiah = formatRupiah(invoice.amount);
   const statusStr = getHumanStatus(invoice.status, invoice.paid_at, invoice.rejection_reason);
+  const customerTag = formatCustomerMentionText(invoice.customer_jid, invoice.customer_name);
   
   let text = `INVOICE PEMBAYARAN QRIS\n`;
   text += `${storeName}\n`;
   text += `----------------------------------------\n`;
   text += `No. Invoice: \`${invoice.invoice_number}\`\n`;
   text += `Waktu Transaksi: ${invoice.created_at}\n`;
-  text += `Pelanggan: ${invoice.customer_name}\n`;
+  text += `Pelanggan: ${customerTag}\n`;
 
   if (invoice.items_summary) {
     text += `Rincian Pesanan: ${invoice.items_summary}\n`;
@@ -181,6 +192,7 @@ function formatAdminProofNotification(invoice) {
 module.exports = {
   formatRupiah,
   getHumanStatus,
+  formatCustomerMentionText,
   createInvoiceService,
   formatInvoiceText,
   formatAdminInvoiceNotification,

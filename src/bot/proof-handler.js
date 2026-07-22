@@ -1,7 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const invoiceRepo = require('../database/invoice-repo');
-const { formatAdminProofNotification, formatInvoiceText, formatRupiah } = require('../services/invoice-service');
+const { formatAdminProofNotification, formatInvoiceText, formatRupiah, formatCustomerMentionText } = require('../services/invoice-service');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
 const { getRealMessage } = require('../utils/message-utils');
 
@@ -64,12 +64,15 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
       }
     }
 
-    // Send confirmation to user in user chat
+    const customerTag = formatCustomerMentionText(customerJid, invoice.customer_name);
+
+    // Send confirmation to user with explicit customer mention/tag
     await sock.sendMessage(chatJid, {
-      text: `✅ Bukti Pembayaran Diterima!\n\nNo. Invoice: ${invoice.invoice_number}\nTotal: ${formatRupiah(invoice.amount)}\nStatus: PROOF_SUBMITTED (Menunggu Verifikasi Admin)\n\nBukti pembayaran Anda telah diteruskan ke Admin untuk diverifikasi.\n\nabyn.xyz`
+      text: `✅ Bukti Pembayaran Diterima!\n\nPelanggan: ${customerTag}\nNo. Invoice: \`${invoice.invoice_number}\`\nTotal: ${formatRupiah(invoice.amount)}\nStatus: Menunggu Verifikasi Admin\n\nBukti pembayaran Anda telah diteruskan ke Admin untuk diverifikasi.\n\nabyn.xyz`,
+      mentions: [customerJid]
     }, { quoted: msg });
 
-    // Send proof screenshot image + caption notice to SINGLE Primary Admin JID (strictly prevents duplicate delivery)
+    // Send proof screenshot image + caption notice to SINGLE Primary Admin JID
     const adminJid = invoiceRepo.getAdminJid();
     if (adminJid) {
       const adminNoticeText = formatAdminProofNotification(updatedInvoice);
