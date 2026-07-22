@@ -45,45 +45,27 @@ function isAdmin(senderJid) {
 }
 
 /**
- * Get unique Admin JIDs (deduplicating LID vs Phone JID belonging to the same admin)
+ * Get primary single Admin JID for sending notifications (prevents duplicate delivery to same admin)
  */
-function getUniqueAdminJids() {
+function getAdminJid() {
   const adminRaw = process.env.ADMIN_JID || process.env.ADMIN_NUMBER || '';
-  if (!adminRaw) return [];
-  const items = adminRaw.split(',').map(a => a.trim()).filter(Boolean);
-
-  const uniqueList = [];
-  const seenCleans = new Set();
-  const seenPures = new Set();
-
-  for (const item of items) {
-    const cleaned = cleanJid(item);
-    const pure = getPureNumber(item);
-
-    // Skip if we already added this admin (by clean JID or pure number)
-    if (cleaned && (seenCleans.has(cleaned) || (pure && seenPures.has(pure)))) {
-      continue;
-    }
-
-    if (cleaned) seenCleans.add(cleaned);
-    if (pure) seenPures.add(pure);
-
-    if (cleaned.includes('@')) {
-      uniqueList.push(cleaned);
-    } else if (pure) {
-      uniqueList.push(`${pure}@s.whatsapp.net`);
-    }
+  if (!adminRaw) return '';
+  
+  const firstAdmin = adminRaw.split(',')[0].trim();
+  const cleaned = cleanJid(firstAdmin);
+  if (cleaned.includes('@')) {
+    return cleaned;
   }
-
-  return uniqueList;
+  const pure = getPureNumber(firstAdmin);
+  return pure ? `${pure}@s.whatsapp.net` : '';
 }
 
 /**
- * Get primary Admin JID
+ * Get all unique admin JIDs
  */
-function getAdminJid() {
-  const jids = getUniqueAdminJids();
-  return jids.length > 0 ? jids[0] : '';
+function getAllAdminJids() {
+  const primary = getAdminJid();
+  return primary ? [primary] : [];
 }
 
 /**
@@ -305,7 +287,7 @@ module.exports = {
   getPureNumber,
   isAdmin,
   getAdminJid,
-  getUniqueAdminJids,
+  getAllAdminJids,
   generateInvoiceNumber,
   getCurrentFormattedTimestamp,
   createInvoice,

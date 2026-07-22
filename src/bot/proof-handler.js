@@ -69,15 +69,11 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
       text: `✅ Bukti Pembayaran Diterima!\n\nNo. Invoice: ${invoice.invoice_number}\nTotal: ${formatRupiah(invoice.amount)}\nStatus: PROOF_SUBMITTED (Menunggu Verifikasi Admin)\n\nBukti pembayaran Anda telah diteruskan ke Admin untuk diverifikasi.\n\nabyn.xyz`
     }, { quoted: msg });
 
-    // Send proof screenshot image + caption notice to UNIQUE Admin JIDs (preventing duplicate delivery to same admin)
-    const adminJids = invoiceRepo.getUniqueAdminJids();
-    const adminNoticeText = formatAdminProofNotification(updatedInvoice);
+    // Send proof screenshot image + caption notice to SINGLE Primary Admin JID (strictly prevents duplicate delivery)
+    const adminJid = invoiceRepo.getAdminJid();
+    if (adminJid) {
+      const adminNoticeText = formatAdminProofNotification(updatedInvoice);
 
-    if (adminJids.length === 0) {
-      console.log('⚠️ [PROOF] ADMIN_JID belum dikonfigurasi di .env!');
-    }
-
-    for (const adminJid of adminJids) {
       try {
         const sentAdminMsg = await sock.sendMessage(adminJid, {
           image: buffer,
@@ -92,6 +88,8 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
       } catch (err) {
         console.error(`⚠️ Gagal mengirim foto bukti ke Admin (${adminJid}):`, err.message);
       }
+    } else {
+      console.log('⚠️ [PROOF] ADMIN_JID belum dikonfigurasi di .env!');
     }
 
     return true;
