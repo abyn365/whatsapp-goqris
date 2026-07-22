@@ -11,6 +11,22 @@ function formatRupiah(amount) {
 }
 
 /**
+ * Mendapatkan teks status yang ramah manusia (human readable status)
+ */
+function getHumanStatus(status, paidAt, rejectionReason) {
+  if (status === 'PAID') {
+    return `Lunas (Waktu: ${paidAt || 'sekarang'})`;
+  }
+  if (status === 'PROOF_SUBMITTED') {
+    return `Menunggu Verifikasi Admin`;
+  }
+  if (status === 'REJECTED') {
+    return `Ditolak (${rejectionReason || 'Bukti transfer tidak valid'})`;
+  }
+  return `Menunggu Pembayaran`;
+}
+
+/**
  * Buat invoice baru dan hasilkan buffer gambar QRIS dinamis
  */
 async function createInvoiceService({
@@ -22,7 +38,6 @@ async function createInvoiceService({
   itemsSummary,
   notes
 }) {
-  // Ambil payload QRIS statis dari konfigurasi toko
   const rawStaticQris = invoiceRepo.getConfig('static_qris', process.env.DEFAULT_STATIC_QRIS || '');
   const staticQris = sanitizeQrisString(rawStaticQris);
 
@@ -60,29 +75,17 @@ async function createInvoiceService({
 }
 
 /**
- * Format teks status invoice
- */
-function formatStatusString(status, paidAt) {
-  if (status === 'PAID') {
-    return `LUNAS (Diperbarui pada ${paidAt || 'sekarang'})`;
-  }
-  if (status === 'PROOF_SUBMITTED') {
-    return `PROOF_SUBMITTED (Bukti Dikirim, Menunggu Verifikasi Admin)`;
-  }
-  return `PENDING (Menunggu Pembayaran)`;
-}
-
-/**
  * Format teks invoice sebagai caption gambar tunggal
+ * No. Invoice ditulis dalam format kode (`INV-xxxx`) untuk memudahkan 1-tap copy di WhatsApp
  */
 function formatInvoiceText(invoice, storeName) {
   const rupiah = formatRupiah(invoice.amount);
-  const statusStr = formatStatusString(invoice.status, invoice.paid_at);
+  const statusStr = getHumanStatus(invoice.status, invoice.paid_at, invoice.rejection_reason);
   
   let text = `INVOICE PEMBAYARAN QRIS\n`;
   text += `${storeName}\n`;
   text += `----------------------------------------\n`;
-  text += `No. Invoice: ${invoice.invoice_number}\n`;
+  text += `No. Invoice: \`${invoice.invoice_number}\`\n`;
   text += `Waktu Transaksi: ${invoice.created_at}\n`;
   text += `Pelanggan: ${invoice.customer_name}\n`;
 
@@ -103,6 +106,8 @@ function formatInvoiceText(invoice, storeName) {
     text += `PEMBAYARAN LUNAS. TERIMA KASIH!\n`;
   } else if (invoice.status === 'PROOF_SUBMITTED') {
     text += `Bukti transfer Anda telah dikirim dan sedang dalam proses verifikasi Admin.\n`;
+  } else if (invoice.status === 'REJECTED') {
+    text += `Bukti transfer sebelumnya DITOLAK. Silakan unggah/balas foto bukti pembayaran yang baru.\n`;
   } else {
     text += `PETUNJUK PEMBAYARAN:\n`;
     text += `1. Scan Kode QRIS pada gambar ini menggunakan aplikasi GoPay, OVO, Dana, ShopeePay, BCA, Mandiri, dll.\n`;
@@ -121,11 +126,11 @@ function formatInvoiceText(invoice, storeName) {
  */
 function formatAdminInvoiceNotification(invoice) {
   const rupiah = formatRupiah(invoice.amount);
-  const statusStr = formatStatusString(invoice.status, invoice.paid_at);
+  const statusStr = getHumanStatus(invoice.status, invoice.paid_at, invoice.rejection_reason);
 
   let text = `NOTIFIKASI INVOICE TOKO\n`;
   text += `----------------------------------------\n`;
-  text += `No. Invoice: ${invoice.invoice_number}\n`;
+  text += `No. Invoice: \`${invoice.invoice_number}\`\n`;
   text += `Waktu: ${invoice.created_at}\n`;
   text += `Pelanggan: ${invoice.customer_name} (${invoice.customer_jid})\n`;
   text += `Nominal: ${rupiah}\n`;
@@ -136,9 +141,11 @@ function formatAdminInvoiceNotification(invoice) {
   text += `----------------------------------------\n`;
 
   if (invoice.status === 'PAID') {
-    text += `INVOICE TELAH LUNAS (PAID).\n`;
+    text += `INVOICE TELAH LUNAS.\n`;
   } else if (invoice.status === 'PROOF_SUBMITTED') {
-    text += `Bukti transfer telah dikirim oleh pelanggan.\nKetik !markpaid ${invoice.invoice_number} untuk mengonfirmasi pelunasan.\n`;
+    text += `Bukti transfer telah dikirim oleh pelanggan.\nKetik !markpaid ${invoice.invoice_number} untuk melunasi.\nKetik !reject ${invoice.invoice_number} [alasan] untuk menolak.\n`;
+  } else if (invoice.status === 'REJECTED') {
+    text += `Bukti transfer ditolak oleh Admin.\n`;
   } else {
     text += `Menunggu pembayaran dari pelanggan.\nKetik !markpaid ${invoice.invoice_number} jika lunas.\n`;
   }
@@ -152,22 +159,28 @@ function formatAdminInvoiceNotification(invoice) {
  */
 function formatAdminProofNotification(invoice) {
   const rupiah = formatRupiah(invoice.amount);
+  const statusStr = getHumanStatus(invoice.status, invoice.paid_at, invoice.rejection_reason);
+
   let text = `BUKTI PEMBAYARAN DITERIMA\n`;
   text += `----------------------------------------\n`;
-  text += `No. Invoice: ${invoice.invoice_number}\n`;
+  text += `No. Invoice: \`${invoice.invoice_number}\`\n`;
   text += `Waktu Invoice: ${invoice.created_at}\n`;
   text += `Pelanggan: ${invoice.customer_name} (${invoice.customer_jid})\n`;
   text += `Total Tagihan: ${rupiah}\n`;
-  text += `Status: PROOF_SUBMITTED (Menunggu Verifikasi Admin)\n`;
+  text += `Status: ${statusStr}\n`;
   text += `----------------------------------------\n`;
-  text += `Foto bukti transfer terlampir di atas.\n`;
-  text += `Ketik !markpaid ${invoice.invoice_number} untuk mengonfirmasi pelunasan.\n`;
+  text += `Foto bukti transfer terlampir di atas.\n\n`;
+  text += `Aksi Admin:\n`;
+  text += `• Ketik !markpaid ${invoice.invoice_number} (untuk melunasi)\n`;
+  text += `• Ketik !reject ${invoice.invoice_number} [alasan] (untuk menolak)\n`;
+  text += `----------------------------------------\n`;
   text += `abyn.xyz`;
   return text;
 }
 
 module.exports = {
   formatRupiah,
+  getHumanStatus,
   createInvoiceService,
   formatInvoiceText,
   formatAdminInvoiceNotification,

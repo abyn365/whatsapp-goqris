@@ -21,7 +21,7 @@ function getPureNumber(jidOrPhone) {
 }
 
 /**
- * Memeriksa apakah JID pengirim cocok dengan Admin JID / Admin Number
+ * Memeriksa apakah JID pengirim cocok dengan daftar Admin (Mendukung banyak admin)
  */
 function isAdmin(senderJid) {
   const adminRaw = process.env.ADMIN_JID || process.env.ADMIN_NUMBER || '';
@@ -45,27 +45,44 @@ function isAdmin(senderJid) {
 }
 
 /**
- * Get primary single Admin JID for sending notifications (prevents duplicate delivery to same admin)
+ * Get all distinct physical Admin JIDs (Deduplicates entries pointing to the same admin account)
  */
-function getAdminJid() {
+function getUniqueAdminJids() {
   const adminRaw = process.env.ADMIN_JID || process.env.ADMIN_NUMBER || '';
-  if (!adminRaw) return '';
-  
-  const firstAdmin = adminRaw.split(',')[0].trim();
-  const cleaned = cleanJid(firstAdmin);
-  if (cleaned.includes('@')) {
-    return cleaned;
+  if (!adminRaw) return [];
+  const items = adminRaw.split(',').map(a => a.trim()).filter(Boolean);
+
+  const jids = [];
+  const seenPures = new Set();
+  const seenCleans = new Set();
+
+  for (const item of items) {
+    const cleaned = cleanJid(item);
+    const pure = getPureNumber(item);
+
+    // Skip if this physical admin has already been added
+    if (pure && seenPures.has(pure)) continue;
+    if (cleaned && seenCleans.has(cleaned)) continue;
+
+    if (pure) seenPures.add(pure);
+    if (cleaned) seenCleans.add(cleaned);
+
+    if (cleaned.includes('@')) {
+      jids.push(cleaned);
+    } else if (pure) {
+      jids.push(`${pure}@s.whatsapp.net`);
+    }
   }
-  const pure = getPureNumber(firstAdmin);
-  return pure ? `${pure}@s.whatsapp.net` : '';
+
+  return jids;
 }
 
 /**
- * Get all unique admin JIDs
+ * Get primary single Admin JID for fallback
  */
-function getAllAdminJids() {
-  const primary = getAdminJid();
-  return primary ? [primary] : [];
+function getAdminJid() {
+  const jids = getUniqueAdminJids();
+  return jids.length > 0 ? jids[0] : '';
 }
 
 /**
@@ -181,7 +198,7 @@ function getPendingInvoiceForUser(customerJid, chatJid) {
 
   const rows = db.prepare(`
     SELECT * FROM invoices 
-    WHERE status IN ('PENDING', 'PROOF_SUBMITTED')
+    WHERE status IN ('PENDING', 'PROOF_SUBMITTED', 'REJECTED')
     ORDER BY id DESC
   `).all();
 
@@ -224,6 +241,18 @@ function markInvoicePaid(id) {
 }
 
 /**
+ * Reject invoice payment proof with a reason
+ */
+function rejectInvoiceProof(id, reason) {
+  const rejectionReason = reason || 'Bukti transfer tidak valid atau tidak terlihat jelas';
+  return db.prepare(`
+    UPDATE invoices 
+    SET status = 'REJECTED', rejection_reason = ? 
+    WHERE id = ?
+  `).run(rejectionReason, Number(id));
+}
+
+/**
  * List recent invoices with optional limit & status filter
  */
 function listInvoices({ limit = 10, status = null } = {}) {
@@ -251,7 +280,7 @@ function getInvoiceStats() {
   `).get();
 
   const pendingRow = db.prepare(`
-    SELECT COUNT(*) as count FROM invoices WHERE status IN ('PENDING', 'PROOF_SUBMITTED')
+    SELECT COUNT(*) as count FROM invoices WHERE status IN ('PENDING', 'PROOF_SUBMITTED', 'REJECTED')
   `).get();
 
   return {
@@ -287,7 +316,7 @@ module.exports = {
   getPureNumber,
   isAdmin,
   getAdminJid,
-  getAllAdminJids,
+  getUniqueAdminJids,
   generateInvoiceNumber,
   getCurrentFormattedTimestamp,
   createInvoice,
@@ -298,6 +327,7 @@ module.exports = {
   getPendingInvoiceForUser,
   updateInvoiceProof,
   markInvoicePaid,
+  rejectInvoiceProof,
   listInvoices,
   getInvoiceStats,
   getConfig,

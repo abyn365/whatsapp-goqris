@@ -4,6 +4,7 @@ const {
   handleStatusCommand,
   handleHistoryCommand,
   handleMarkPaidCommand,
+  handleRejectCommand,
   handleStatsCommand,
   handleSetQrisCommand,
   handleHelpCommand
@@ -102,6 +103,12 @@ async function handleIncomingMessage(sock, msg) {
       await handleMarkPaidCommand(sock, msg, args, customerJid, chatJid);
       break;
 
+    case 'reject':
+    case 'rejectproof':
+    case 'tolak':
+      await handleRejectCommand(sock, msg, args, customerJid, chatJid);
+      break;
+
     case 'stats':
     case 'omset':
       await handleStatsCommand(sock, msg, customerJid, chatJid);
@@ -114,6 +121,7 @@ async function handleIncomingMessage(sock, msg) {
     case 'help':
     case 'bantuan':
     case 'menu':
+    case 'adminhelp':
       await handleHelpCommand(sock, msg, customerJid, chatJid);
       break;
 

@@ -37,7 +37,8 @@ db.exec(`
     created_at TEXT NOT NULL,
     paid_at TEXT,
     admin_msg_key TEXT,
-    customer_msg_key TEXT
+    customer_msg_key TEXT,
+    rejection_reason TEXT
   );
 
   CREATE TABLE IF NOT EXISTS app_config (
@@ -46,13 +47,17 @@ db.exec(`
   );
 `);
 
-// Migrations for existing databases missing admin_msg_key or customer_msg_key
+// Migrations for existing databases
 try {
   db.exec('ALTER TABLE invoices ADD COLUMN admin_msg_key TEXT;');
 } catch (e) {}
 
 try {
   db.exec('ALTER TABLE invoices ADD COLUMN customer_msg_key TEXT;');
+} catch (e) {}
+
+try {
+  db.exec('ALTER TABLE invoices ADD COLUMN rejection_reason TEXT;');
 } catch (e) {}
 
 // Insert default configs if not existing
