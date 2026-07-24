@@ -37,7 +37,7 @@ async function testJidAndAdminSupport() {
 
   const mockQuoted = { key: { remoteJid: '197341567021139@lid', id: 'MSG123' } };
   const sanitizedQuoted = sanitizeQuotedMessage(mockQuoted, '197341567021139@lid');
-  assert.strictEqual(sanitizedQuoted.key.remoteJid, '6285117569816@s.whatsapp.net');
+  assert.strictEqual(sanitizedQuoted.key.remoteJid, '197341567021139@lid');
   console.log('   ✅ Mention & quoted message key sanitization test passed.\n');
 
   // Test 5: Admin matching with @lid and @s.whatsapp.net formats when .env has phone number
@@ -53,8 +53,8 @@ async function testJidAndAdminSupport() {
   assert.strictEqual(invoiceRepo.isAdmin('628111222333@s.whatsapp.net'), false);
   console.log('   ✅ Admin JID matching test passed.\n');
 
-  // Test 6: safeSendMessage Deliverable Routing Mock Test
-  console.log('6️⃣ Testing safeSendMessage deliverable routing...');
+  // Test 6: safeSendMessage Chat Thread Target Delivery
+  console.log('6️⃣ Testing safeSendMessage chat thread target delivery...');
   let sentTargetJid = '';
   let sentMentions = [];
   let sentQuotedJid = '';
@@ -75,10 +75,10 @@ async function testJidAndAdminSupport() {
     quoted: { key: { remoteJid: '197341567021139@lid', id: 'Q1' } }
   });
 
-  assert.strictEqual(sentTargetJid, '6285117569816@s.whatsapp.net');
+  assert.strictEqual(sentTargetJid, '197341567021139@lid');
   assert.strictEqual(sentMentions[0], '6285117569816@s.whatsapp.net');
-  assert.strictEqual(sentQuotedJid, '6285117569816@s.whatsapp.net');
-  console.log('   ✅ safeSendMessage deliverable routing test passed.\n');
+  assert.strictEqual(sentQuotedJid, '197341567021139@lid');
+  console.log('   ✅ safeSendMessage chat thread target delivery test passed.\n');
 
   console.log('🎉 ALL JID & ADMIN TESTS PASSED!');
 }

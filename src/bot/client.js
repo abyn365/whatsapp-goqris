@@ -211,7 +211,7 @@ async function startWhatsAppBot() {
       }
     }
 
-    if (m.type === 'notify') {
+    if (m.type === 'notify' || m.type === 'append') {
       for (const msg of m.messages) {
         try {
           await handleIncomingMessage(sock, msg);

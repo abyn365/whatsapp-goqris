@@ -12,7 +12,14 @@ const {
 } = require('./commands');
 
 const { handlePaymentProof } = require('./proof-handler');
-const { getRealMessage, getTextFromMessage, cleanJid, hasJidPair, resolveJidOnWhatsApp } = require('../utils/message-utils');
+const {
+  getRealMessage,
+  getTextFromMessage,
+  cleanJid,
+  hasJidPair,
+  resolveJidOnWhatsApp,
+  extractAndRegisterJidPairs
+} = require('../utils/message-utils');
 
 const BOT_PREFIX = process.env.BOT_PREFIX || '!';
 
@@ -44,10 +51,8 @@ function isDuplicateMessage(msgId) {
 async function handleIncomingMessage(sock, msg) {
   if (!msg || !msg.message || !msg.key || !msg.key.id) return;
 
-  const msgId = msg.key.id;
-  if (isDuplicateMessage(msgId)) {
-    return; // Skip duplicate event delivery
-  }
+  // Extract and register any JID pair (@lid <-> @s.whatsapp.net) present in incoming message metadata
+  extractAndRegisterJidPairs(msg);
 
   const rawChatJid = msg.key.remoteJid;
   // Ignore status broadcast updates
@@ -76,6 +81,12 @@ async function handleIncomingMessage(sock, msg) {
   // Extract body text
   const bodyText = getTextFromMessage(realMessage);
   const trimmedText = bodyText.trim();
+  const isImage = !!realMessage.imageMessage;
+
+  // Only process prefix commands or image proofs
+  if (!trimmedText.startsWith(BOT_PREFIX) && !isImage) {
+    return;
+  }
 
   // If message is sent by bot itself (fromMe):
   // Only process if it starts with BOT_PREFIX (allowing self-testing commands)
@@ -83,8 +94,13 @@ async function handleIncomingMessage(sock, msg) {
     return;
   }
 
+  // Deduplicate AFTER confirming it is a processable command or proof
+  const msgId = msg.key.id;
+  if (isDuplicateMessage(msgId)) {
+    return;
+  }
+
   // Check if image upload is a payment proof (if image sent without prefix command)
-  const isImage = !!realMessage.imageMessage;
   if (isImage && !trimmedText.startsWith(BOT_PREFIX) && !msg.key.fromMe) {
     console.log(`📸 [${isGroup ? 'GROUP' : 'DM'}] Foto diterima dari ${customerName} (${customerJid}), mengecek bukti transfer...`);
     const isProofProcessed = await handlePaymentProof(sock, msg, customerJid, chatJid, isGroup);

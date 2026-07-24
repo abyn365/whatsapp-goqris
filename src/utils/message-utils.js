@@ -110,8 +110,7 @@ function getAlternateJid(jid) {
 }
 
 /**
- * Resolves a JID to a deliverable WhatsApp destination JID
- * Groups (g.us) remain untouched. User DMs with @lid are mapped to @s.whatsapp.net.
+ * Resolves a JID to a deliverable phone number JID (@s.whatsapp.net) if available, otherwise returns cleaned JID
  */
 function getDeliverableJid(jid) {
   if (!jid) return '';
@@ -200,7 +199,7 @@ function extractAllSenderJids(msg, senderJid) {
   const realMsg = getRealMessage(msg?.message);
   if (realMsg) {
     for (const sub of Object.values(realMsg)) {
-      if (sub && sub.contextInfo) {
+      if (sub && typeof sub === 'object' && sub.contextInfo) {
         if (sub.contextInfo.participant) {
           for (const r of resolveAllJids(sub.contextInfo.participant)) set.add(r);
         }
@@ -209,6 +208,39 @@ function extractAllSenderJids(msg, senderJid) {
   }
 
   return Array.from(set).filter(Boolean);
+}
+
+/**
+ * Automatically extracts and registers all LID <-> PN pairs present in Baileys message object
+ */
+function extractAndRegisterJidPairs(msg) {
+  if (!msg || !msg.key) return;
+
+  const key = msg.key;
+  if (key.remoteJid && key.remoteJidAlt) {
+    registerJidPair(key.remoteJid, key.remoteJidAlt);
+  }
+  if (key.remoteJid && key.authorPn) {
+    registerJidPair(key.remoteJid, key.authorPn);
+  }
+  if (key.participant && key.participantAlt) {
+    registerJidPair(key.participant, key.participantAlt);
+  }
+  if (key.participant && key.authorPn) {
+    registerJidPair(key.participant, key.authorPn);
+  }
+
+  const realMsg = getRealMessage(msg.message);
+  if (realMsg) {
+    for (const sub of Object.values(realMsg)) {
+      if (sub && typeof sub === 'object' && sub.contextInfo) {
+        const ci = sub.contextInfo;
+        if (ci.participant && ci.participantAlt) {
+          registerJidPair(ci.participant, ci.participantAlt);
+        }
+      }
+    }
+  }
 }
 
 /**
@@ -228,24 +260,19 @@ function sanitizeMentions(mentions) {
 }
 
 /**
- * Sanitizes quoted message object so remoteJid & participant match deliverable JIDs
+ * Sanitizes quoted message object so remoteJid & participant match target chat
  */
 function sanitizeQuotedMessage(quotedMsg, targetJid) {
   if (!quotedMsg || !quotedMsg.key) return quotedMsg;
 
-  const deliverableTarget = getDeliverableJid(targetJid);
+  const cleanTarget = cleanJid(targetJid);
   const clonedKey = { ...quotedMsg.key };
 
-  if (deliverableTarget.endsWith('@g.us')) {
-    clonedKey.remoteJid = deliverableTarget;
-    if (clonedKey.participant) {
-      clonedKey.participant = getDeliverableJid(clonedKey.participant);
-    }
-  } else {
-    clonedKey.remoteJid = deliverableTarget;
-    if (clonedKey.participant) {
-      delete clonedKey.participant;
-    }
+  clonedKey.remoteJid = cleanTarget;
+  if (!cleanTarget.endsWith('@g.us')) {
+    delete clonedKey.participant;
+  } else if (clonedKey.participant) {
+    clonedKey.participant = cleanJid(clonedKey.participant);
   }
 
   return {
@@ -260,18 +287,7 @@ function sanitizeQuotedMessage(quotedMsg, targetJid) {
 async function safeSendMessage(sock, targetJid, content, options = {}) {
   if (!sock || !targetJid) return null;
 
-  // 1. Resolve deliverable target JID (convert @lid -> @s.whatsapp.net for DMs)
-  let deliverableTarget = getDeliverableJid(targetJid);
-
-  // If target is @lid and not resolved in memory yet, attempt onWhatsApp resolution
-  if (deliverableTarget.endsWith('@lid')) {
-    const resolved = await resolveJidOnWhatsApp(sock, deliverableTarget);
-    if (resolved && resolved.pnJid) {
-      deliverableTarget = resolved.pnJid;
-    }
-  }
-
-  // 2. Clone and sanitize content & options
+  const cleanTarget = cleanJid(targetJid);
   const sendContent = { ...content };
   const sendOptions = { ...options };
 
@@ -280,14 +296,28 @@ async function safeSendMessage(sock, targetJid, content, options = {}) {
   }
 
   if (sendOptions.quoted) {
-    sendOptions.quoted = sanitizeQuotedMessage(sendOptions.quoted, deliverableTarget);
+    sendOptions.quoted = sanitizeQuotedMessage(sendOptions.quoted, cleanTarget);
   }
 
   try {
-    const sentMsg = await sock.sendMessage(deliverableTarget, sendContent, sendOptions);
+    const sentMsg = await sock.sendMessage(cleanTarget, sendContent, sendOptions);
     return sentMsg;
   } catch (err) {
-    console.error(`⚠️ Failed to send message to ${deliverableTarget}:`, err.message);
+    console.error(`⚠️ Failed to send message to ${cleanTarget}:`, err.message);
+
+    // Fallback: If cleanTarget was @lid and failed, attempt alternate @s.whatsapp.net
+    if (cleanTarget.endsWith('@lid')) {
+      const alt = getAlternateJid(cleanTarget);
+      if (alt && alt !== cleanTarget) {
+        try {
+          if (sendOptions.quoted) {
+            sendOptions.quoted = sanitizeQuotedMessage(sendOptions.quoted, alt);
+          }
+          const altSent = await sock.sendMessage(alt, sendContent, sendOptions);
+          return altSent;
+        } catch (e2) {}
+      }
+    }
     throw err;
   }
 }
@@ -305,6 +335,7 @@ module.exports = {
   resolveAllJids,
   resolveJidOnWhatsApp,
   extractAllSenderJids,
+  extractAndRegisterJidPairs,
   sanitizeMentions,
   sanitizeQuotedMessage,
   safeSendMessage
