@@ -1,9 +1,9 @@
 const assert = require('assert');
-const { cleanJid, normalizePhoneNumber, getPureNumber, extractAllSenderJids, registerJidPair, getAlternateJid, safeSendMessage } = require('../src/utils/message-utils');
+const { cleanJid, normalizePhoneNumber, getPureNumber, extractAllSenderJids, registerJidPair, getAlternateJid, getDeliverableJid, sanitizeMentions, sanitizeQuotedMessage, safeSendMessage } = require('../src/utils/message-utils');
 const invoiceRepo = require('../src/database/invoice-repo');
 
 async function testJidAndAdminSupport() {
-  console.log('🧪 Testing JID cleaning, phone normalization & dynamic admin resolution...\n');
+  console.log('🧪 Testing JID cleaning, phone normalization & deliverable target resolution...\n');
 
   // Test 1: JID Cleaning & Device ID Stripping
   console.log('1️⃣ Testing JID cleaning & device specifier removal...');
@@ -21,15 +21,27 @@ async function testJidAndAdminSupport() {
   assert.strictEqual(getPureNumber('081234567890@s.whatsapp.net'), '6281234567890');
   console.log('   ✅ Phone normalization test passed.\n');
 
-  // Test 3: Bi-directional LID <-> PN Pair Registration
-  console.log('3️⃣ Testing bi-directional LID <-> PN pair registration & lookup...');
+  // Test 3: Bi-directional LID <-> PN Pair Registration & Deliverable Resolution
+  console.log('3️⃣ Testing bi-directional LID <-> PN pair registration & deliverable resolution...');
   registerJidPair('197341567021139@lid', '6285117569816@s.whatsapp.net');
   assert.strictEqual(getAlternateJid('197341567021139@lid'), '6285117569816@s.whatsapp.net');
-  assert.strictEqual(getAlternateJid('6285117569816@s.whatsapp.net'), '197341567021139@lid');
-  console.log('   ✅ Bi-directional LID <-> PN pair registration test passed.\n');
+  assert.strictEqual(getDeliverableJid('197341567021139@lid'), '6285117569816@s.whatsapp.net');
+  assert.strictEqual(getDeliverableJid('120363000@g.us'), '120363000@g.us');
+  console.log('   ✅ Bi-directional LID <-> PN pair deliverable resolution test passed.\n');
 
-  // Test 4: Admin matching with @lid and @s.whatsapp.net formats when .env has phone number
-  console.log('4️⃣ Testing Admin JID matching (@lid sender matching phone in .env)...');
+  // Test 4: Mention & Quoted Message Sanitization
+  console.log('4️⃣ Testing mention & quoted message key sanitization...');
+  const sanitizedMents = sanitizeMentions(['197341567021139@lid', '628123456789@s.whatsapp.net']);
+  assert.strictEqual(sanitizedMents.includes('6285117569816@s.whatsapp.net'), true);
+  assert.strictEqual(sanitizedMents.includes('628123456789@s.whatsapp.net'), true);
+
+  const mockQuoted = { key: { remoteJid: '197341567021139@lid', id: 'MSG123' } };
+  const sanitizedQuoted = sanitizeQuotedMessage(mockQuoted, '197341567021139@lid');
+  assert.strictEqual(sanitizedQuoted.key.remoteJid, '6285117569816@s.whatsapp.net');
+  console.log('   ✅ Mention & quoted message key sanitization test passed.\n');
+
+  // Test 5: Admin matching with @lid and @s.whatsapp.net formats when .env has phone number
+  console.log('5️⃣ Testing Admin JID matching (@lid sender matching phone in .env)...');
   process.env.ADMIN_JID = '6285117569816@s.whatsapp.net';
 
   // Sender sending from @lid matching linked phone in .env
@@ -41,20 +53,32 @@ async function testJidAndAdminSupport() {
   assert.strictEqual(invoiceRepo.isAdmin('628111222333@s.whatsapp.net'), false);
   console.log('   ✅ Admin JID matching test passed.\n');
 
-  // Test 5: safeSendMessage Dual Routing Mock Test
-  console.log('5️⃣ Testing safeSendMessage dual routing...');
-  const sentRecipients = [];
+  // Test 6: safeSendMessage Deliverable Routing Mock Test
+  console.log('6️⃣ Testing safeSendMessage deliverable routing...');
+  let sentTargetJid = '';
+  let sentMentions = [];
+  let sentQuotedJid = '';
+
   const mockSock = {
     sendMessage: async (jid, content, options) => {
-      sentRecipients.push(jid);
+      sentTargetJid = jid;
+      sentMentions = content.mentions || [];
+      sentQuotedJid = options?.quoted?.key?.remoteJid || '';
       return { key: { remoteJid: jid, id: 'MOCK123' } };
     }
   };
 
-  await safeSendMessage(mockSock, '197341567021139@lid', { text: 'Test' });
-  assert.ok(sentRecipients.includes('197341567021139@lid'), 'Should send to primary LID');
-  assert.ok(sentRecipients.includes('6285117569816@s.whatsapp.net'), 'Should also send to linked alternate PN');
-  console.log('   ✅ safeSendMessage dual routing test passed.\n');
+  await safeSendMessage(mockSock, '197341567021139@lid', {
+    text: 'Test',
+    mentions: ['197341567021139@lid']
+  }, {
+    quoted: { key: { remoteJid: '197341567021139@lid', id: 'Q1' } }
+  });
+
+  assert.strictEqual(sentTargetJid, '6285117569816@s.whatsapp.net');
+  assert.strictEqual(sentMentions[0], '6285117569816@s.whatsapp.net');
+  assert.strictEqual(sentQuotedJid, '6285117569816@s.whatsapp.net');
+  console.log('   ✅ safeSendMessage deliverable routing test passed.\n');
 
   console.log('🎉 ALL JID & ADMIN TESTS PASSED!');
 }

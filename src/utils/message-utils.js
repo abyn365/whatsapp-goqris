@@ -109,6 +109,24 @@ function getAlternateJid(jid) {
   return null;
 }
 
+/**
+ * Resolves a JID to a deliverable WhatsApp destination JID
+ * Groups (g.us) remain untouched. User DMs with @lid are mapped to @s.whatsapp.net.
+ */
+function getDeliverableJid(jid) {
+  if (!jid) return '';
+  const cleaned = cleanJid(jid);
+  if (cleaned.endsWith('@g.us')) return cleaned;
+
+  if (cleaned.endsWith('@lid')) {
+    const alt = getAlternateJid(cleaned);
+    if (alt && alt.endsWith('@s.whatsapp.net')) {
+      return alt;
+    }
+  }
+  return cleaned;
+}
+
 function resolveAllJids(jid) {
   if (!jid) return [];
   const clean = cleanJid(jid);
@@ -179,7 +197,6 @@ function extractAllSenderJids(msg, senderJid) {
     }
   }
 
-  // Check quoted contextInfo for participant JIDs
   const realMsg = getRealMessage(msg?.message);
   if (realMsg) {
     for (const sub of Object.values(realMsg)) {
@@ -195,42 +212,84 @@ function extractAllSenderJids(msg, senderJid) {
 }
 
 /**
- * Sends WhatsApp message safely with fallback to alternate JID (@s.whatsapp.net / @lid)
+ * Sanitizes a mentions array to ensure all JIDs are valid @s.whatsapp.net JIDs
+ */
+function sanitizeMentions(mentions) {
+  if (!Array.isArray(mentions)) return [];
+  const result = [];
+  for (const m of mentions) {
+    if (!m) continue;
+    const deliverable = getDeliverableJid(m);
+    if (deliverable && deliverable.endsWith('@s.whatsapp.net')) {
+      result.push(deliverable);
+    }
+  }
+  return Array.from(new Set(result));
+}
+
+/**
+ * Sanitizes quoted message object so remoteJid & participant match deliverable JIDs
+ */
+function sanitizeQuotedMessage(quotedMsg, targetJid) {
+  if (!quotedMsg || !quotedMsg.key) return quotedMsg;
+
+  const deliverableTarget = getDeliverableJid(targetJid);
+  const clonedKey = { ...quotedMsg.key };
+
+  if (deliverableTarget.endsWith('@g.us')) {
+    clonedKey.remoteJid = deliverableTarget;
+    if (clonedKey.participant) {
+      clonedKey.participant = getDeliverableJid(clonedKey.participant);
+    }
+  } else {
+    clonedKey.remoteJid = deliverableTarget;
+    if (clonedKey.participant) {
+      delete clonedKey.participant;
+    }
+  }
+
+  return {
+    ...quotedMsg,
+    key: clonedKey
+  };
+}
+
+/**
+ * Sends WhatsApp message safely with target resolution, quoted key sanitization & mention validation
  */
 async function safeSendMessage(sock, targetJid, content, options = {}) {
   if (!sock || !targetJid) return null;
 
-  const primaryJid = cleanJid(targetJid);
-  const altJid = getAlternateJid(primaryJid);
+  // 1. Resolve deliverable target JID (convert @lid -> @s.whatsapp.net for DMs)
+  let deliverableTarget = getDeliverableJid(targetJid);
 
-  let sentMsg = null;
-  let primaryErr = null;
-
-  try {
-    sentMsg = await sock.sendMessage(primaryJid, content, options);
-  } catch (err) {
-    primaryErr = err;
-    console.error(`⚠️ Failed to send message to primary JID (${primaryJid}):`, err.message);
-  }
-
-  // If alternate JID exists and (primary failed OR target was @lid), also send/fallback to alternate JID
-  if (altJid && (primaryErr || primaryJid.endsWith('@lid'))) {
-    try {
-      const altSent = await sock.sendMessage(altJid, content, options);
-      if (!sentMsg) sentMsg = altSent;
-      console.log(`↪️ Message successfully sent to alternate JID (${altJid})`);
-    } catch (err) {
-      if (primaryErr) {
-        console.error(`⚠️ Failed to send message to alternate JID (${altJid}):`, err.message);
-      }
+  // If target is @lid and not resolved in memory yet, attempt onWhatsApp resolution
+  if (deliverableTarget.endsWith('@lid')) {
+    const resolved = await resolveJidOnWhatsApp(sock, deliverableTarget);
+    if (resolved && resolved.pnJid) {
+      deliverableTarget = resolved.pnJid;
     }
   }
 
-  if (!sentMsg && primaryErr) {
-    throw primaryErr;
+  // 2. Clone and sanitize content & options
+  const sendContent = { ...content };
+  const sendOptions = { ...options };
+
+  if (sendContent.mentions) {
+    sendContent.mentions = sanitizeMentions(sendContent.mentions);
   }
 
-  return sentMsg;
+  if (sendOptions.quoted) {
+    sendOptions.quoted = sanitizeQuotedMessage(sendOptions.quoted, deliverableTarget);
+  }
+
+  try {
+    const sentMsg = await sock.sendMessage(deliverableTarget, sendContent, sendOptions);
+    return sentMsg;
+  } catch (err) {
+    console.error(`⚠️ Failed to send message to ${deliverableTarget}:`, err.message);
+    throw err;
+  }
 }
 
 module.exports = {
@@ -242,8 +301,11 @@ module.exports = {
   registerJidPair,
   hasJidPair,
   getAlternateJid,
+  getDeliverableJid,
   resolveAllJids,
   resolveJidOnWhatsApp,
   extractAllSenderJids,
+  sanitizeMentions,
+  sanitizeQuotedMessage,
   safeSendMessage
 };

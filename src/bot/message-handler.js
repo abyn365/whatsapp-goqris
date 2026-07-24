@@ -12,7 +12,7 @@ const {
 } = require('./commands');
 
 const { handlePaymentProof } = require('./proof-handler');
-const { getRealMessage, getTextFromMessage, cleanJid } = require('../utils/message-utils');
+const { getRealMessage, getTextFromMessage, cleanJid, hasJidPair, resolveJidOnWhatsApp } = require('../utils/message-utils');
 
 const BOT_PREFIX = process.env.BOT_PREFIX || '!';
 
@@ -63,6 +63,11 @@ async function handleIncomingMessage(sock, msg) {
 
   const customerJid = cleanJid(rawCustomerJid);
   const customerName = msg.pushName || customerJid.split('@')[0];
+
+  // Resolve customer JID LID <-> PN pair on WhatsApp servers if not mapped yet
+  if (customerJid && !hasJidPair(customerJid)) {
+    resolveJidOnWhatsApp(sock, customerJid).catch(() => {});
+  }
 
   // Unwrap message content
   const realMessage = getRealMessage(msg.message);
