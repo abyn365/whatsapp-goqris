@@ -10,6 +10,7 @@ const pino = require('pino');
 const path = require('path');
 const fs = require('fs');
 const { handleIncomingMessage } = require('./message-handler');
+const { resolveJidOnWhatsApp, cleanJid } = require('../utils/message-utils');
 
 const AUTH_DIR = path.join(process.cwd(), 'data', 'auth_info_baileys');
 
@@ -69,6 +70,24 @@ function getStoredMessage(key) {
   if (!key || !key.id || !key.remoteJid) return null;
   const keyStr = `${key.remoteJid}_${key.id}`;
   return messageStore.get(keyStr) || null;
+}
+
+/**
+ * Resolves all configured Admin numbers on startup to link PN <-> LID JIDs
+ */
+async function resolveAdminJids(sock) {
+  const adminRaw = process.env.ADMIN_JID || process.env.ADMIN_NUMBER || '';
+  if (!adminRaw || !sock) return;
+
+  const adminList = adminRaw.split(',').map(a => a.trim()).filter(Boolean);
+  for (const item of adminList) {
+    try {
+      const res = await resolveJidOnWhatsApp(sock, item);
+      if (res && res.pnJid && res.lidJid) {
+        console.log(`🔗 [ADMIN LINK] Successfully registered Admin PN (${res.pnJid}) <-> LID (${res.lidJid})`);
+      }
+    } catch (e) {}
+  }
 }
 
 /**
@@ -177,6 +196,9 @@ async function startWhatsAppBot() {
     } else if (connection === 'open') {
       reconnectAttempts = 0;
       console.log('✅ WhatsApp Bot successfully connected and 100% online!');
+      resolveAdminJids(sock).catch(err => {
+        console.error('Error resolving admin JIDs on connect:', err.message);
+      });
     }
   });
 

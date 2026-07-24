@@ -1,5 +1,5 @@
 const db = require('./db');
-const { cleanJid, getPureNumber, normalizePhoneNumber, extractAllSenderJids } = require('../utils/message-utils');
+const { cleanJid, getPureNumber, normalizePhoneNumber, extractAllSenderJids, resolveAllJids, getAlternateJid } = require('../utils/message-utils');
 
 // Dynamic cache of recognized admin JIDs (auto-learned from admin interactions)
 const dynamicAdminJidMap = new Set();
@@ -12,7 +12,15 @@ function isAdmin(senderJid, msg = null) {
   const adminRaw = process.env.ADMIN_JID || process.env.ADMIN_NUMBER || '';
   if (!adminRaw && dynamicAdminJidMap.size === 0) return false;
 
-  const candidateJids = extractAllSenderJids(msg, senderJid);
+  const rawCandidates = extractAllSenderJids(msg, senderJid);
+  const candidates = new Set();
+
+  for (const cand of rawCandidates) {
+    for (const r of resolveAllJids(cand)) {
+      candidates.add(r);
+    }
+  }
+
   const adminList = adminRaw.split(',').map(a => a.trim()).filter(Boolean);
 
   const adminSet = new Set();
@@ -21,18 +29,24 @@ function isAdmin(senderJid, msg = null) {
   for (const item of adminList) {
     const cleaned = cleanJid(item);
     const pure = getPureNumber(item);
-    if (cleaned) adminSet.add(cleaned);
+    if (cleaned) {
+      adminSet.add(cleaned);
+      const alt = getAlternateJid(cleaned);
+      if (alt) adminSet.add(alt);
+    }
     if (pure) adminPureSet.add(pure);
   }
 
   for (const dynJid of dynamicAdminJidMap) {
     adminSet.add(dynJid);
+    const alt = getAlternateJid(dynJid);
+    if (alt) adminSet.add(alt);
     const pure = getPureNumber(dynJid);
     if (pure) adminPureSet.add(pure);
   }
 
   let matched = false;
-  for (const candidate of candidateJids) {
+  for (const candidate of candidates) {
     const pure = getPureNumber(candidate);
     if (adminSet.has(candidate) || (pure && adminPureSet.has(pure))) {
       matched = true;
@@ -42,7 +56,7 @@ function isAdmin(senderJid, msg = null) {
 
   // If matched, dynamically auto-learn all JID representations (@lid and @s.whatsapp.net)
   if (matched) {
-    for (const candidate of candidateJids) {
+    for (const candidate of candidates) {
       if (candidate && !candidate.endsWith('@g.us')) {
         dynamicAdminJidMap.add(candidate);
       }

@@ -3,7 +3,7 @@ const fs = require('fs');
 const invoiceRepo = require('../database/invoice-repo');
 const { formatAdminProofNotification, formatInvoiceText, formatRupiah, formatCustomerMentionText } = require('../services/invoice-service');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-const { getRealMessage, cleanJid } = require('../utils/message-utils');
+const { getRealMessage, cleanJid, safeSendMessage } = require('../utils/message-utils');
 
 const proofDir = path.join(process.cwd(), 'data', 'proofs');
 if (!fs.existsSync(proofDir)) {
@@ -58,7 +58,7 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
     if (updatedInvoice.customer_msg_key) {
       try {
         const customerKey = JSON.parse(updatedInvoice.customer_msg_key);
-        await sock.sendMessage(customerKey.remoteJid || cleanedChatJid, {
+        await safeSendMessage(sock, customerKey.remoteJid || cleanedChatJid, {
           text: updatedCustomerInvoiceText,
           edit: customerKey
         });
@@ -70,7 +70,7 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
     const customerTag = formatCustomerMentionText(cleanedCustomerJid, invoice.customer_name);
 
     // Send confirmation to user with explicit customer mention/tag
-    await sock.sendMessage(cleanedChatJid, {
+    await safeSendMessage(sock, cleanedChatJid, {
       text: `✅ Bukti Pembayaran Diterima!\n\nPelanggan: ${customerTag}\nNo. Invoice: \`${invoice.invoice_number}\`\nTotal: ${formatRupiah(invoice.amount)}\nStatus: Menunggu Verifikasi Admin\n\nBukti pembayaran Anda telah diteruskan ke Admin untuk diverifikasi.\n\nabyn.xyz`,
       mentions: [cleanedCustomerJid]
     }, { quoted: msg });
@@ -81,7 +81,7 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
       const adminNoticeText = formatAdminProofNotification(updatedInvoice);
 
       try {
-        const sentAdminMsg = await sock.sendMessage(adminJid, {
+        const sentAdminMsg = await safeSendMessage(sock, adminJid, {
           image: buffer,
           caption: adminNoticeText
         });
@@ -101,7 +101,7 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
     return true;
   } catch (err) {
     console.error('Error handling payment proof screenshot:', err);
-    await sock.sendMessage(cleanedChatJid, {
+    await safeSendMessage(sock, cleanedChatJid, {
       text: `⚠️ Gagal memproses foto bukti pembayaran: ${err.message}`
     }, { quoted: msg });
     return false;
