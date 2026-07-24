@@ -288,6 +288,8 @@ async function safeSendMessage(sock, targetJid, content, options = {}) {
   if (!sock || !targetJid) return null;
 
   const cleanTarget = cleanJid(targetJid);
+  const isGroup = cleanTarget.endsWith('@g.us');
+
   const sendContent = { ...content };
   const sendOptions = { ...options };
 
@@ -295,12 +297,17 @@ async function safeSendMessage(sock, targetJid, content, options = {}) {
     sendContent.mentions = sanitizeMentions(sendContent.mentions);
   }
 
-  if (sendOptions.quoted) {
+  // Quoted messages are valid in Groups (@g.us). In DM (non-group) chats, omit `quoted`
+  // to prevent Baileys from injecting invalid `contextInfo.participant` which causes WhatsApp servers to drop DM messages.
+  if (!isGroup) {
+    delete sendOptions.quoted;
+  } else if (sendOptions.quoted) {
     sendOptions.quoted = sanitizeQuotedMessage(sendOptions.quoted, cleanTarget);
   }
 
   try {
     const sentMsg = await sock.sendMessage(cleanTarget, sendContent, sendOptions);
+    console.log(`✅ Message sent to ${cleanTarget} (${isGroup ? 'GROUP' : 'DM'})`);
     return sentMsg;
   } catch (err) {
     console.error(`⚠️ Failed to send message to ${cleanTarget}:`, err.message);
@@ -310,10 +317,8 @@ async function safeSendMessage(sock, targetJid, content, options = {}) {
       const alt = getAlternateJid(cleanTarget);
       if (alt && alt !== cleanTarget) {
         try {
-          if (sendOptions.quoted) {
-            sendOptions.quoted = sanitizeQuotedMessage(sendOptions.quoted, alt);
-          }
           const altSent = await sock.sendMessage(alt, sendContent, sendOptions);
+          console.log(`✅ Fallback message sent to alternate JID (${alt})`);
           return altSent;
         } catch (e2) {}
       }

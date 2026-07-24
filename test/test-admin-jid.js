@@ -53,8 +53,8 @@ async function testJidAndAdminSupport() {
   assert.strictEqual(invoiceRepo.isAdmin('628111222333@s.whatsapp.net'), false);
   console.log('   ✅ Admin JID matching test passed.\n');
 
-  // Test 6: safeSendMessage Chat Thread Target Delivery
-  console.log('6️⃣ Testing safeSendMessage chat thread target delivery...');
+  // Test 6: safeSendMessage Chat Thread Target Delivery (DM vs Group)
+  console.log('6️⃣ Testing safeSendMessage chat thread target delivery (DM vs Group)...');
   let sentTargetJid = '';
   let sentMentions = [];
   let sentQuotedJid = '';
@@ -68,8 +68,9 @@ async function testJidAndAdminSupport() {
     }
   };
 
+  // Test DM (quoted removed to prevent WhatsApp silent drop)
   await safeSendMessage(mockSock, '197341567021139@lid', {
-    text: 'Test',
+    text: 'Test DM',
     mentions: ['197341567021139@lid']
   }, {
     quoted: { key: { remoteJid: '197341567021139@lid', id: 'Q1' } }
@@ -77,7 +78,18 @@ async function testJidAndAdminSupport() {
 
   assert.strictEqual(sentTargetJid, '197341567021139@lid');
   assert.strictEqual(sentMentions[0], '6285117569816@s.whatsapp.net');
-  assert.strictEqual(sentQuotedJid, '197341567021139@lid');
+  assert.strictEqual(sentQuotedJid, '', 'Quoted should be omitted in DM to prevent WhatsApp silent drop');
+
+  // Test Group (quoted preserved for group chats)
+  await safeSendMessage(mockSock, '120363000@g.us', {
+    text: 'Test Group'
+  }, {
+    quoted: { key: { remoteJid: '120363000@g.us', id: 'Q2' } }
+  });
+
+  assert.strictEqual(sentTargetJid, '120363000@g.us');
+  assert.strictEqual(sentQuotedJid, '120363000@g.us', 'Quoted should be preserved in Group chat');
+
   console.log('   ✅ safeSendMessage chat thread target delivery test passed.\n');
 
   console.log('🎉 ALL JID & ADMIN TESTS PASSED!');
