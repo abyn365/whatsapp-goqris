@@ -110,7 +110,7 @@ function getAlternateJid(jid) {
 }
 
 /**
- * Resolves a JID to a deliverable phone number JID (@s.whatsapp.net) if available, otherwise returns cleaned JID
+ * Resolves a JID to a deliverable phone number JID (@s.whatsapp.net) for DMs
  */
 function getDeliverableJid(jid) {
   if (!jid) return '';
@@ -282,14 +282,22 @@ function sanitizeQuotedMessage(quotedMsg, targetJid) {
 }
 
 /**
- * Sends WhatsApp message safely with target resolution, quoted key sanitization & mention validation
+ * Sends WhatsApp message safely with target resolution (@lid -> @s.whatsapp.net for DMs), quoted key sanitization & mention validation
  */
 async function safeSendMessage(sock, targetJid, content, options = {}) {
   if (!sock || !targetJid) return null;
 
-  const cleanTarget = cleanJid(targetJid);
-  const isGroup = cleanTarget.endsWith('@g.us');
+  // 1. Convert @lid to deliverable @s.whatsapp.net for DMs
+  let deliverableTarget = getDeliverableJid(targetJid);
 
+  if (deliverableTarget.endsWith('@lid')) {
+    const resolved = await resolveJidOnWhatsApp(sock, deliverableTarget);
+    if (resolved && resolved.pnJid) {
+      deliverableTarget = resolved.pnJid;
+    }
+  }
+
+  const isGroup = deliverableTarget.endsWith('@g.us');
   const sendContent = { ...content };
   const sendOptions = { ...options };
 
@@ -297,32 +305,19 @@ async function safeSendMessage(sock, targetJid, content, options = {}) {
     sendContent.mentions = sanitizeMentions(sendContent.mentions);
   }
 
-  // Quoted messages are valid in Groups (@g.us). In DM (non-group) chats, omit `quoted`
-  // to prevent Baileys from injecting invalid `contextInfo.participant` which causes WhatsApp servers to drop DM messages.
+  // In 1-on-1 DM chats, delete `quoted` to prevent Baileys from injecting invalid `contextInfo.participant` which causes WhatsApp servers to drop DM messages.
   if (!isGroup) {
     delete sendOptions.quoted;
   } else if (sendOptions.quoted) {
-    sendOptions.quoted = sanitizeQuotedMessage(sendOptions.quoted, cleanTarget);
+    sendOptions.quoted = sanitizeQuotedMessage(sendOptions.quoted, deliverableTarget);
   }
 
   try {
-    const sentMsg = await sock.sendMessage(cleanTarget, sendContent, sendOptions);
-    console.log(`✅ Message sent to ${cleanTarget} (${isGroup ? 'GROUP' : 'DM'})`);
+    const sentMsg = await sock.sendMessage(deliverableTarget, sendContent, sendOptions);
+    console.log(`✅ Message sent to ${deliverableTarget} (${isGroup ? 'GROUP' : 'DM'})`);
     return sentMsg;
   } catch (err) {
-    console.error(`⚠️ Failed to send message to ${cleanTarget}:`, err.message);
-
-    // Fallback: If cleanTarget was @lid and failed, attempt alternate @s.whatsapp.net
-    if (cleanTarget.endsWith('@lid')) {
-      const alt = getAlternateJid(cleanTarget);
-      if (alt && alt !== cleanTarget) {
-        try {
-          const altSent = await sock.sendMessage(alt, sendContent, sendOptions);
-          console.log(`✅ Fallback message sent to alternate JID (${alt})`);
-          return altSent;
-        } catch (e2) {}
-      }
-    }
+    console.error(`⚠️ Failed to send message to ${deliverableTarget}:`, err.message);
     throw err;
   }
 }

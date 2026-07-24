@@ -68,7 +68,7 @@ async function testJidAndAdminSupport() {
     }
   };
 
-  // Test DM (quoted removed to prevent WhatsApp silent drop)
+  // Test DM (resolves @lid to @s.whatsapp.net, quoted removed to prevent WhatsApp silent drop)
   await safeSendMessage(mockSock, '197341567021139@lid', {
     text: 'Test DM',
     mentions: ['197341567021139@lid']
@@ -76,7 +76,7 @@ async function testJidAndAdminSupport() {
     quoted: { key: { remoteJid: '197341567021139@lid', id: 'Q1' } }
   });
 
-  assert.strictEqual(sentTargetJid, '197341567021139@lid');
+  assert.strictEqual(sentTargetJid, '6285117569816@s.whatsapp.net');
   assert.strictEqual(sentMentions[0], '6285117569816@s.whatsapp.net');
   assert.strictEqual(sentQuotedJid, '', 'Quoted should be omitted in DM to prevent WhatsApp silent drop');
 
