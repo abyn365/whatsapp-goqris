@@ -1,63 +1,77 @@
 const db = require('./db');
+const { cleanJid, getPureNumber, normalizePhoneNumber, extractAllSenderJids } = require('../utils/message-utils');
 
-/**
- * Strips device ID from WhatsApp JID (e.g. 197341567021139:45@lid -> 197341567021139@lid)
- */
-function cleanJid(jid) {
-  if (!jid) return '';
-  const part = String(jid).trim().split(':')[0];
-  if (part.includes('@')) return part.toLowerCase();
-  const domain = jid.includes('@') ? jid.split('@')[1] : 's.whatsapp.net';
-  return `${part}@${domain}`.toLowerCase();
-}
-
-/**
- * Normalisasi JID atau nomor ke string angka murni
- */
-function getPureNumber(jidOrPhone) {
-  if (!jidOrPhone) return '';
-  const cleaned = cleanJid(jidOrPhone);
-  return cleaned.split('@')[0].replace(/[^0-9]/g, '');
-}
+// Dynamic cache of recognized admin JIDs (auto-learned from admin interactions)
+const dynamicAdminJidMap = new Set();
 
 /**
  * Memeriksa apakah JID pengirim cocok dengan daftar Admin
+ * Mendukung format @lid, @s.whatsapp.net, maupun nomor telepon biasa
  */
-function isAdmin(senderJid) {
+function isAdmin(senderJid, msg = null) {
   const adminRaw = process.env.ADMIN_JID || process.env.ADMIN_NUMBER || '';
-  if (!adminRaw) return false;
+  if (!adminRaw && dynamicAdminJidMap.size === 0) return false;
 
-  const senderClean = cleanJid(senderJid);
-  const senderPure = getPureNumber(senderJid);
+  const candidateJids = extractAllSenderJids(msg, senderJid);
+  const adminList = adminRaw.split(',').map(a => a.trim()).filter(Boolean);
 
-  const adminList = adminRaw.split(',').map(a => a.trim());
+  const adminSet = new Set();
+  const adminPureSet = new Set();
 
-  for (const adminItem of adminList) {
-    if (!adminItem) continue;
-    const adminClean = cleanJid(adminItem);
-    const adminPure = getPureNumber(adminItem);
-
-    if (adminClean && senderClean === adminClean) return true;
-    if (adminPure && senderPure === adminPure) return true;
+  for (const item of adminList) {
+    const cleaned = cleanJid(item);
+    const pure = getPureNumber(item);
+    if (cleaned) adminSet.add(cleaned);
+    if (pure) adminPureSet.add(pure);
   }
 
-  return false;
+  for (const dynJid of dynamicAdminJidMap) {
+    adminSet.add(dynJid);
+    const pure = getPureNumber(dynJid);
+    if (pure) adminPureSet.add(pure);
+  }
+
+  let matched = false;
+  for (const candidate of candidateJids) {
+    const pure = getPureNumber(candidate);
+    if (adminSet.has(candidate) || (pure && adminPureSet.has(pure))) {
+      matched = true;
+      break;
+    }
+  }
+
+  // If matched, dynamically auto-learn all JID representations (@lid and @s.whatsapp.net)
+  if (matched) {
+    for (const candidate of candidateJids) {
+      if (candidate && !candidate.endsWith('@g.us')) {
+        dynamicAdminJidMap.add(candidate);
+      }
+    }
+  }
+
+  return matched;
 }
 
 /**
  * Get primary single Admin JID for sending notifications (strictly 1 destination to prevent duplicate deliveries)
+ * Auto-resolves between preferred active JID (@lid or @s.whatsapp.net) and configured ADMIN_JID
  */
-function getAdminJid() {
+function getAdminJid(preferredJid = '') {
+  if (preferredJid && isAdmin(preferredJid)) {
+    return cleanJid(preferredJid);
+  }
+
+  if (dynamicAdminJidMap.size > 0) {
+    const learnedList = Array.from(dynamicAdminJidMap);
+    const latest = learnedList[learnedList.length - 1];
+    if (latest) return cleanJid(latest);
+  }
+
   const adminRaw = process.env.ADMIN_JID || process.env.ADMIN_NUMBER || '';
   if (!adminRaw) return '';
-  
+
   const firstAdmin = adminRaw.split(',')[0].trim();
-  const cleaned = cleanJid(firstAdmin);
-  if (cleaned.includes('@')) {
-    return cleaned;
-  }
-  const pure = getPureNumber(firstAdmin);
-  return pure ? `${pure}@s.whatsapp.net` : '';
+  return cleanJid(firstAdmin);
 }
 
 /**

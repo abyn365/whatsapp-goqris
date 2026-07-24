@@ -12,12 +12,31 @@ const {
 } = require('./commands');
 
 const { handlePaymentProof } = require('./proof-handler');
-const { getRealMessage, getTextFromMessage } = require('../utils/message-utils');
+const { getRealMessage, getTextFromMessage, cleanJid } = require('../utils/message-utils');
 
 const BOT_PREFIX = process.env.BOT_PREFIX || '!';
 
-// Message deduplication cache
-const processedMessageIds = new Set();
+// Message deduplication cache with timestamp TTL
+const processedMessageMap = new Map();
+
+function isDuplicateMessage(msgId) {
+  if (!msgId) return false;
+  const now = Date.now();
+  if (processedMessageMap.has(msgId)) {
+    return true;
+  }
+  processedMessageMap.set(msgId, now);
+
+  // Evict items older than 10 minutes
+  if (processedMessageMap.size > 1000) {
+    for (const [id, time] of processedMessageMap.entries()) {
+      if (now - time > 600000) {
+        processedMessageMap.delete(id);
+      }
+    }
+  }
+  return false;
+}
 
 /**
  * Parses and routes incoming WhatsApp messages
@@ -26,26 +45,23 @@ async function handleIncomingMessage(sock, msg) {
   if (!msg || !msg.message || !msg.key || !msg.key.id) return;
 
   const msgId = msg.key.id;
-  if (processedMessageIds.has(msgId)) {
+  if (isDuplicateMessage(msgId)) {
     return; // Skip duplicate event delivery
   }
-  processedMessageIds.add(msgId);
 
-  // Clean memory if cache grows large
-  if (processedMessageIds.size > 1000) {
-    const arr = Array.from(processedMessageIds);
-    arr.slice(0, 500).forEach(id => processedMessageIds.delete(id));
+  const rawChatJid = msg.key.remoteJid;
+  // Ignore status broadcast updates
+  if (!rawChatJid || rawChatJid === 'status@broadcast') return;
+
+  const chatJid = cleanJid(rawChatJid);
+  const isGroup = chatJid.endsWith('@g.us');
+
+  let rawCustomerJid = isGroup ? (msg.key.participant || rawChatJid) : rawChatJid;
+  if (msg.key.fromMe && !isGroup) {
+    rawCustomerJid = sock.user?.id || rawChatJid;
   }
 
-  const chatJid = msg.key.remoteJid;
-  // Ignore status broadcast updates
-  if (!chatJid || chatJid === 'status@broadcast') return;
-
-  const isGroup = chatJid.endsWith('@g.us');
-  const customerJid = isGroup 
-    ? (msg.key.participant || msg.key.remoteJid) 
-    : (msg.key.fromMe ? (sock.user?.id ? sock.user.id.split(':')[0] + '@s.whatsapp.net' : chatJid) : chatJid);
-
+  const customerJid = cleanJid(rawCustomerJid);
   const customerName = msg.pushName || customerJid.split('@')[0];
 
   // Unwrap message content

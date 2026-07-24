@@ -3,7 +3,7 @@ const fs = require('fs');
 const invoiceRepo = require('../database/invoice-repo');
 const { formatAdminProofNotification, formatInvoiceText, formatRupiah, formatCustomerMentionText } = require('../services/invoice-service');
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-const { getRealMessage } = require('../utils/message-utils');
+const { getRealMessage, cleanJid } = require('../utils/message-utils');
 
 const proofDir = path.join(process.cwd(), 'data', 'proofs');
 if (!fs.existsSync(proofDir)) {
@@ -20,6 +20,9 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
   const realMsg = getRealMessage(msg.message);
   if (!realMsg || !realMsg.imageMessage) return false;
 
+  const cleanedCustomerJid = cleanJid(customerJid);
+  const cleanedChatJid = cleanJid(chatJid);
+
   // 1. Check if the image message is a reply to another message (quoted message)
   const contextInfo = realMsg.imageMessage.contextInfo;
   if (!contextInfo || !contextInfo.quotedMessage) {
@@ -28,9 +31,9 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
   }
 
   // 2. Verify that the exact user ID (customerJid) has an active pending invoice
-  const invoice = invoiceRepo.getPendingInvoiceForUser(customerJid, chatJid);
+  const invoice = invoiceRepo.getPendingInvoiceForUser(cleanedCustomerJid, cleanedChatJid);
   if (!invoice) {
-    console.log(`ℹ️ [PROOF] Gambar balasan diterima dari ${customerJid}, tetapi pengguna ini tidak memiliki invoice pending.`);
+    console.log(`ℹ️ [PROOF] Gambar balasan diterima dari ${cleanedCustomerJid}, tetapi pengguna ini tidak memiliki invoice pending.`);
     return false;
   }
 
@@ -55,7 +58,7 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
     if (updatedInvoice.customer_msg_key) {
       try {
         const customerKey = JSON.parse(updatedInvoice.customer_msg_key);
-        await sock.sendMessage(customerKey.remoteJid || chatJid, {
+        await sock.sendMessage(customerKey.remoteJid || cleanedChatJid, {
           text: updatedCustomerInvoiceText,
           edit: customerKey
         });
@@ -64,12 +67,12 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
       }
     }
 
-    const customerTag = formatCustomerMentionText(customerJid, invoice.customer_name);
+    const customerTag = formatCustomerMentionText(cleanedCustomerJid, invoice.customer_name);
 
     // Send confirmation to user with explicit customer mention/tag
-    await sock.sendMessage(chatJid, {
+    await sock.sendMessage(cleanedChatJid, {
       text: `✅ Bukti Pembayaran Diterima!\n\nPelanggan: ${customerTag}\nNo. Invoice: \`${invoice.invoice_number}\`\nTotal: ${formatRupiah(invoice.amount)}\nStatus: Menunggu Verifikasi Admin\n\nBukti pembayaran Anda telah diteruskan ke Admin untuk diverifikasi.\n\nabyn.xyz`,
-      mentions: [customerJid]
+      mentions: [cleanedCustomerJid]
     }, { quoted: msg });
 
     // Send proof screenshot image + caption notice to SINGLE Primary Admin JID
@@ -98,7 +101,7 @@ async function handlePaymentProof(sock, msg, customerJid, chatJid, isGroup) {
     return true;
   } catch (err) {
     console.error('Error handling payment proof screenshot:', err);
-    await sock.sendMessage(chatJid, {
+    await sock.sendMessage(cleanedChatJid, {
       text: `⚠️ Gagal memproses foto bukti pembayaran: ${err.message}`
     }, { quoted: msg });
     return false;

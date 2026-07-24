@@ -12,9 +12,10 @@ if (!fs.existsSync(dbDir)) {
 
 const db = new DatabaseSync(dbPath);
 
-// Enable WAL mode for better concurrency
+// Enable WAL mode and busy timeout for better concurrency
 try {
   db.exec('PRAGMA journal_mode = WAL;');
+  db.exec('PRAGMA busy_timeout = 5000;');
 } catch (e) {
   // Ignore if pragma WAL is restricted
 }
@@ -45,6 +46,10 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT
   );
+
+  CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+  CREATE INDEX IF NOT EXISTS idx_invoices_customer_jid ON invoices(customer_jid);
+  CREATE INDEX IF NOT EXISTS idx_invoices_invoice_number ON invoices(invoice_number);
 `);
 
 // Migrations for existing databases
